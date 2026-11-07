@@ -347,6 +347,12 @@ android {
         }
     }
 
+    // Required for java.time and other java.* APIs on Android 7 (API 24).
+    // Restored from 1.1.x (removed upstream in Bug 1969392 when minSdk was 26).
+    compileOptions {
+        coreLibraryDesugaringEnabled = true
+    }
+
     namespace = 'org.mozilla.fenix'
 }
 
@@ -537,6 +543,8 @@ tasks.register("updateAMOExtensionVersion", Copy) { task ->
 }
 
 dependencies {
+    // Restored from 1.1.x for API 24 support (see Bug 1969392 upstream removal).
+    coreLibraryDesugaring libs.desugar.jdk.libs
     implementation project('longfox')
     implementation project(':components:browser-engine-gecko')
     implementation project(':components:compose-awesomebar')

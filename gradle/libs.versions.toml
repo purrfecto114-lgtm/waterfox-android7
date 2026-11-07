@@ -56,6 +56,7 @@ work = "2.12.0"
 
 # Google other
 accompanist = "0.37.3"
+desugar-jdk-libs = "2.1.5" # Restored for API 24 (Android 7) support; keep in sync with coreLibraryDesugaring users
 firebase-messaging = "25.0.2"
 ksp = "2.3.12"
 material = "1.14.0"
@@ -233,6 +234,7 @@ androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling
 
 # Google other
 accompanist-drawablepainter = { module = "com.google.accompanist:accompanist-drawablepainter", version.ref = "accompanist" }
+desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar-jdk-libs" }
 firebase-messaging = { module = "com.google.firebase:firebase-messaging", version.ref = "firebase-messaging" }
 google-material = { module = "com.google.android.material:material", version.ref = "material" }
 ksp-symbol-processing-aa = { module = "com.google.devtools.ksp:symbol-processing-aa", version.ref = "ksp" }

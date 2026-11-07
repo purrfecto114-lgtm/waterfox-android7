@@ -9,9 +9,16 @@ plugins {
 
 android {
     namespace = 'mozilla.components.lib.push.firebase'
+
+    // Required for java.time APIs on Android 7 (API 24); restored from 1.1.x
+    // (removed upstream in Bug 1969392 when minSdk was 26).
+    compileOptions {
+        coreLibraryDesugaringEnabled = true
+    }
 }
 
 dependencies {
+    coreLibraryDesugaring libs.desugar.jdk.libs
     api libs.firebase.messaging
 
     implementation project(':components:concept-push')
