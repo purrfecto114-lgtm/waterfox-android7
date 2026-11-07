@@ -4,6 +4,7 @@
 
 package mozilla.components.support.base.ext
 
+import android.os.Build
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 
@@ -24,10 +25,18 @@ fun NotificationManagerCompat.areNotificationsEnabledSafe(): Boolean {
  * If the channel does not exist or is null, this returns false. If the channel exists with importance more than
  * [NotificationManagerCompat.IMPORTANCE_NONE] and notifications are enabled for the app, this returns true.
  *
+ * On API < 26 (before Android O) notification channels do not exist; the app-level
+ * notification setting is the only gate. (Restored for API 24 / Android 7 support
+ * so callers do not silently treat notifications as disabled.)
+ *
  * @param channelId the id of the notification channel to check.
  * @return true if the channel is enabled, false otherwise.
  */
 fun NotificationManagerCompat.isNotificationChannelEnabled(channelId: String): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        return areNotificationsEnabledSafe()
+    }
+
     val channel = getNotificationChannelSafe(channelId)
     return if (channel == null) {
         false
