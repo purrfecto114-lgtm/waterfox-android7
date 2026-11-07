@@ -1,25 +1,43 @@
 name: build-apk
 
 # 构建 Waterfox Android 7 (minSdk 24) 迁移版 arm64 Release APK，
-# 成功后删除并重建 Release，附上 APK + 原有文档资产。
+# 成功后可选删除并重建 Release，附上 APK + 原有文档资产。
+#
+# 两段式拆分（前面没问题的步骤不重复跑，单独迭代有问题的段）：
+#   stage=full        完整构建：checkout → overlay → mach build → 保存 buildstate → gradle
+#   stage=gradle-only 跳过 mach build：从指定 run 下载 buildstate（objdir 快照），
+#                     直接重跑 keystore/gradle/校验段，快速迭代签名与打包问题
+#
 # AI 生成：GLM / Z.ai
 
 on:
   workflow_dispatch:
     inputs:
+      stage:
+        description: 'full=完整构建(并保存buildstate); gradle-only=复用buildstate只跑APK组装段'
+        required: true
+        type: choice
+        default: 'full'
+        options:
+          - full
+          - gradle-only
+      buildstate_run_id:
+        description: 'gradle-only 模式：buildstate 所在 run id（必填，来自上一次 full run）'
+        required: false
+        default: ''
       version:
         description: 'APK versionName（branchBuild.waterfox.version）'
         required: true
         default: '1.0.0'
       tag:
-        description: 'Release tag（构建成功后删除并重建）'
+        description: 'Release tag（publish=true 时删除并重建）'
         required: true
         default: 'android24-v1.0'
       publish:
         description: '构建成功后删除并重建 Release'
         required: true
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
@@ -187,19 +205,45 @@ jobs:
           MOZEOF
           echo "MOZCONFIG=$PWD/.mozconfig-android24" >> "$GITHUB_ENV"
 
+      # ---- gradle-only 专用：恢复上次 full run 保存的 objdir 快照 ----
+      - name: Restore buildstate (gradle-only)
+        if: ${{ inputs.stage == 'gradle-only' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ inputs.buildstate_run_id }}"
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::gradle-only 模式必须提供 buildstate_run_id（先跑一次 stage=full 让它保存 buildstate）"
+            exit 1
+          fi
+          rm -rf /tmp/bs-in && mkdir -p /tmp/bs-in
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
+            -n waterfox-android24-buildstate -D /tmp/bs-in
+          ls -la /tmp/bs-in
+          tar --zstd -xf /tmp/bs-in/buildstate.tar.zst -C full
+          test -f full/obj-aarch64-linux-android/config.status || {
+            echo "::error::buildstate 不完整（缺 config.status）"; exit 1; }
+          cat full/obj-aarch64-linux-android/.buildstate.env >> "$GITHUB_ENV"
+          cat full/obj-aarch64-linux-android/.buildstate.env
+          df -h /
+
       - name: mach configure（含 toolchain bootstrap，失败快速暴露）
         working-directory: full
         run: |
           set -o pipefail
           unset ANDROID_HOME ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT ANDROID_SDK_ROOT
-          export MOZ_BUILD_DATE=$(date -u +%Y%m%d%H%M%S)
-          echo "MOZ_BUILD_DATE=$MOZ_BUILD_DATE" >> "$GITHUB_ENV"
+          if [ "${{ inputs.stage }}" = "full" ]; then
+            export MOZ_BUILD_DATE=$(date -u +%Y%m%d%H%M%S)
+            echo "MOZ_BUILD_DATE=$MOZ_BUILD_DATE" >> "$GITHUB_ENV"
+          fi
           ./mach configure 2>&1 | tee configure.log | tail -40
           test -d "$HOME/.mozbuild/android-sdk-linux" && echo "SDK bootstrapped"
           test -d "$HOME/.mozbuild"/android-ndk-* && echo "NDK bootstrapped"
           df -h /
 
-      - name: mach build (Gecko, 3-5h)
+      - name: mach build (Gecko, ~80min)
+        if: ${{ inputs.stage == 'full' }}
         working-directory: full
         run: |
           set -o pipefail
@@ -208,6 +252,7 @@ jobs:
           df -h /
 
       - name: Package gecko locales
+        if: ${{ inputs.stage == 'full' }}
         working-directory: full
         run: |
           set -o pipefail
@@ -216,11 +261,72 @@ jobs:
           MOZ_CHROME_MULTILOCALE="$(./mach python scripts/package-gecko-locales.py --print-locales)"
           echo "MOZ_CHROME_MULTILOCALE=$MOZ_CHROME_MULTILOCALE" >> "$GITHUB_ENV"
 
-      - name: Decode keystore (持久化签名)
+      # ---- full 专用：保存 objdir 快照，供 gradle-only 快速迭代 ----
+      - name: Save buildstate (objdir 快照，供 gradle-only 复用)
+        if: ${{ inputs.stage == 'full' }}
         working-directory: full
         run: |
-          echo "${{ secrets.SIGNING_KEY_STORE_BASE64 }}" | base64 --decode > mobile/android/fenix/app/keystore.jks
-          keytool -list -keystore mobile/android/fenix/app/keystore.jks -storepass "${{ secrets.SIGNING_STORE_PASSWORD }}" -alias waterfox-android24 >/dev/null && echo "keystore OK"
+          set -euo pipefail
+          printf 'MOZ_BUILD_DATE=%s\nMOZ_CHROME_MULTILOCALE=%s\n' \
+            "$MOZ_BUILD_DATE" "$MOZ_CHROME_MULTILOCALE" \
+            > obj-aarch64-linux-android/.buildstate.env
+          tar --exclude='*.o' --exclude='*.a' --exclude='*.obj' --exclude='*.pyc' \
+            -I 'zstd -3 -T0' -cf "$GITHUB_WORKSPACE/buildstate.tar.zst" \
+            obj-aarch64-linux-android
+          du -sh "$GITHUB_WORKSPACE/buildstate.tar.zst"
+
+      - name: Upload buildstate artifact
+        if: ${{ inputs.stage == 'full' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: waterfox-android24-buildstate
+          path: buildstate.tar.zst
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+
+      # ---- 签名自检（fail-fast）：在 20+ 分钟 gradle 之前暴露签名配置错误 ----
+      - name: Decode keystore + 签名自检 (持久化签名)
+        working-directory: full
+        run: |
+          set -euo pipefail
+          echo "$SIGNING_KEY_STORE_BASE64" | base64 --decode > mobile/android/fenix/app/keystore.jks
+          mkdir -p /tmp/keycheck
+          cat > /tmp/keycheck/CheckKey.java <<'EOF'
+          import java.security.*;
+          import java.io.*;
+          public class CheckKey {
+              public static void main(String[] a) throws Exception {
+                  File f = new File(a[0]);
+                  KeyStore ks;
+                  try (FileInputStream in = new FileInputStream(f)) {
+                      ks = KeyStore.getInstance(in, a[1].toCharArray());
+                  }
+                  if (!ks.isKeyEntry(a[2])) {
+                      System.out.println("FAIL: alias not a key entry: " + a[2]);
+                      System.exit(2);
+                  }
+                  try {
+                      Key k = ks.getKey(a[2], a[3].toCharArray());
+                      if (!(k instanceof PrivateKey)) throw new UnrecoverableKeyException("not private key");
+                      System.out.println("OK: store+key password verified (algo=" + k.getAlgorithm() + ")");
+                  } catch (UnrecoverableKeyException | java.security.spec.InvalidKeySpecException e) {
+                      System.out.println("FAIL: wrong KEY password for alias " + a[2]);
+                      System.exit(3);
+                  }
+              }
+          }
+          EOF
+          javac -d /tmp/keycheck /tmp/keycheck/CheckKey.java
+          java -cp /tmp/keycheck CheckKey mobile/android/fenix/app/keystore.jks \
+            "$SIGNING_STORE_PASSWORD" "$SIGNING_KEY_ALIAS" "$SIGNING_KEY_PASSWORD"
+          CERT_SHA1=$(keytool -list -v -keystore mobile/android/fenix/app/keystore.jks \
+            -storepass "$SIGNING_STORE_PASSWORD" \
+            | grep -i 'SHA-1' | head -1 | awk -F': ' '{print $NF}' | tr -d ' :' | tr 'a-f' 'A-F')
+          echo "cert SHA1: $CERT_SHA1"
+          [ "$CERT_SHA1" = "$EXPECTED_CERT_SHA1" ] || {
+            echo "::error::证书指纹不匹配: $CERT_SHA1"; exit 1; }
+          echo "keystore OK（store+key+指纹全部校验通过，PKCS12 keypass=storepass）"
 
       - name: Build release APKs
         working-directory: full
