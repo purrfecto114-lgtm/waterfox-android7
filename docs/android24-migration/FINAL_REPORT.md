@@ -12,8 +12,12 @@
 ### 1. `min_sdk_version` 最终值？`coreLibraryDesugaring` 是否已恢复？
 
 - **min_sdk_version = "24"**【已验证】`build/moz.configure/android-sdk.configure:160`，
-  targetSdk 保持 37 未动。经 `MOZ_ANDROID_MIN_SDK_VERSION` → gradle.py → shared-settings.gradle
-  链路分发到 GeckoView / Fenix / AC（分发链路已核验）。
+  targetSdk 保持 37 未动。
+  ~~经 `MOZ_ANDROID_MIN_SDK_VERSION` → gradle.py → shared-settings.gradle 链路分发到 GeckoView / Fenix / AC~~
+  **【2026-11-08 勘误】上述链路描述有误**：该 subst 只到达 GeckoView（geckoview/build.gradle）与 mozinfo；
+  **Fenix/AC 的 APK 级 minSdk 真正来源是 `mobile/android/android-components/.config.yml`**
+  （shared-settings.gradle 的 Config 类直接读该文件），v1.0 因此打出 minSdk 26 的包。
+  已修复：`.config.yml` minSdkVersion 26→24，CI 增加 overlay 断言 + 构建后 aapt `sdkVersion:'24'` 强校验。
 - **coreLibraryDesugaring 已恢复**【已验证配置存在；编译行为未验证】三处与 1.1.x 同构：
   - `gradle/libs.versions.toml`: `desugar-jdk-libs = "2.1.5"`（与 archive-1.1 相同版本；
     其 minCompileSdk 34 ≤ 当前 compileSdk 37，minSdk 21 ≤ 24，与 Kotlin/AGP 无耦合）
@@ -72,7 +76,8 @@
 ### 构建基础设施（4 文件）
 | 文件 | 改动 | 理由 / API 级别 |
 |---|---|---|
-| `build/moz.configure/android-sdk.configure` | minSdk 26→24 | 全局唯一 minSdk 来源；targetSdk 37 不动 |
+| `build/moz.configure/android-sdk.configure` | minSdk 26→24 | mozconfigure 侧来源（GeckoView/mozinfo）；targetSdk 37 不动 |
+| `mobile/android/android-components/.config.yml` | minSdkVersion 26→24 | **APK 级 minSdk 真正来源**（shared-settings.gradle Config 类直读；v1.0 勘误新增） |
 | `gradle/libs.versions.toml` | +desugar-jdk-libs 2.1.5（versions + libraries 两段） | java.time 在 API 24 需 desugaring（上游 Bug 1969392 移除后恢复） |
 | `mobile/android/fenix/app/build.gradle` | +compileOptions(coreLibraryDesugaringEnabled) +coreLibraryDesugaring 依赖 | 同上；app 是最终打包端，R8/D8 对全依赖树脱糖 |
 | `mobile/android/android-components/.../push-firebase/build.gradle` | 同 fenix 两处 | 1.1.x 原有配置原样恢复 |

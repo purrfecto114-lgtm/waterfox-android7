@@ -1561,3 +1561,17 @@ index ba757145b..6be878a72 100644
  
        // Set live region
        node.setLiveRegion(liveRegion);
+
+diff --git a/mobile/android/android-components/.config.yml b/mobile/android/android-components/.config.yml
+--- a/mobile/android/android-components/.config.yml
++++ b/mobile/android/android-components/.config.yml
+@@ -6,5 +6,5 @@
+ compileSdkMajorVersion: 37
+ compileSdkMinorVersion: 2
+-minSdkVersion: 26
++minSdkVersion: 24
+ targetSdkVersion: 37
+
+(v1.0.1 fix: APK 级 minSdk 真正来源是本文件——shared-settings.gradle 的 Config 类直读；
+ mozconfigure 的 min_sdk_version 只影响 GeckoView/mozinfo。v1.0 仅改 mozconfigure，
+ APK 仍为 minSdk 26，Android 7 无法安装。详见 FINAL_REPORT.md 勘误。)

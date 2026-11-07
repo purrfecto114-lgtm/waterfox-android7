@@ -94,6 +94,8 @@ jobs:
           rsync -a slim/.github/ full/.github/
           # 一致性断言：迁移必须真实生效
           grep -q 'min_sdk_version="24"' full/build/moz.configure/android-sdk.configure
+          # APK 的 minSdk 真正来源是 .config.yml（shared-settings.gradle 的 Config 类），不是 mozconfigure
+          grep -q 'minSdkVersion: 24' full/mobile/android/android-components/.config.yml
           grep -q 'coreLibraryDesugaringEnabled = true' full/mobile/android/fenix/app/build.gradle
           grep -q 'coreLibraryDesugaring libs.desugar.jdk.libs' full/mobile/android/fenix/app/build.gradle
           grep -q 'desugar-jdk-libs' full/gradle/libs.versions.toml
@@ -380,6 +382,19 @@ jobs:
             if [ "$SHA1" != "$EXPECTED_CERT_SHA1" ]; then
               echo "::error::签名证书不匹配: $SHA1"; exit 1
             fi
+          done
+          # minSdk/targetSdk 强校验（v1.0 的教训：APK 的 minSdk 来自 .config.yml 而非 mozconfigure，
+          # 曾因此打出 minSdk 26 的包导致 Android 7 无法安装。此检查防止回归。）
+          AAPT=$(ls -d "$HOME"/.mozbuild/android-sdk-linux/build-tools/*/aapt 2>/dev/null | sort -V | tail -1)
+          [ -n "$AAPT" ] || { echo "::error::找不到 aapt（build-tools 未 bootstrap）"; exit 1; }
+          for apk in "$APKDIR"/*.apk; do
+            BADGING=$("$AAPT" dump badging "$apk" | head -8)
+            echo "--- aapt badging: $(basename "$apk") ---"; echo "$BADGING"
+            echo "$BADGING" | grep -q "sdkVersion:'24'" || {
+              echo "::error::$(basename "$apk") 的 minSdk 不是 24（Android 7.0）——检查 .config.yml 是否被回归"; exit 1; }
+            echo "$BADGING" | grep -q "targetSdkVersion:'37'" || {
+              echo "::error::$(basename "$apk") 的 targetSdk 不是 37"; exit 1; }
+            echo "minSdk=24 / targetSdk=37 校验通过: $(basename "$apk")"
           done
           mkdir -p dist
           cp "$APKDIR"/*.apk dist/

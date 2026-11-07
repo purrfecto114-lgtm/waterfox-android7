@@ -5,5 +5,5 @@ componentsGroupId: "org.mozilla.components"
 jvmTargetCompatibility: 17
 compileSdkMajorVersion: 37
 compileSdkMinorVersion: 2
-minSdkVersion: 26
+minSdkVersion: 24
 targetSdkVersion: 37
