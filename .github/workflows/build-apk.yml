@@ -163,13 +163,15 @@ jobs:
           ./patches/apply-local-patches.sh
           # 追加：glean includeBuild 自带 ext.build.minSdkVersion=26，与 APK minSdk 24 冲突
           # （v1.0.1 修复：manifest merger 报 uses-sdk:minSdkVersion 24 cannot be smaller than 26）
-          if git -C glean apply --reverse --check patches/glean-minsdk-24.patch >/dev/null 2>&1; then
+          # 注意：git -C 会先切换目录再解析相对路径，补丁必须用绝对路径（官方脚本同理）
+          MINSDK_PATCH="$PWD/patches/glean-minsdk-24.patch"
+          if git -C glean apply --reverse --check "$MINSDK_PATCH" >/dev/null 2>&1; then
             echo "glean minSdk 24 patch: already applied"
-          elif git -C glean apply --check patches/glean-minsdk-24.patch >/dev/null 2>&1; then
-            git -C glean apply patches/glean-minsdk-24.patch
+          elif ERR=$(git -C glean apply --check "$MINSDK_PATCH" 2>&1); then
+            git -C glean apply "$MINSDK_PATCH"
             echo "glean minSdk 24 patch: applied"
           else
-            echo "::error::glean minSdk 24 patch 无法应用（submodule 版本漂移？需重做补丁）"
+            echo "::error::glean minSdk 24 patch 无法应用: $ERR"
             exit 1
           fi
 
