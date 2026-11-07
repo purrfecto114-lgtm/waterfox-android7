@@ -1,0 +1,1563 @@
+diff --git a/README.md b/README.md
+index ad0a1b329..526e0a550 100644
+--- a/README.md
++++ b/README.md
+@@ -2,6 +2,16 @@
+ 
+ The Waterfox for Android browser is based on Fenix.
+ 
++> [!NOTE]
++> **AI-generated work on this branch:** The `android24-full-migration` branch
++> (this is not `main`/`current`) was produced by an AI agent on 2026-11-07.
++> It lowers the Android minimum SDK from 26 to 24 (Android 7) while keeping
++> the full 1.2.x feature set. Scope, method, per-file rationale, and the
++> verified / inferred / unverified status of every claim are documented in
++> [`docs/android24-migration/FINAL_REPORT.md`](docs/android24-migration/FINAL_REPORT.md).
++> The changes are **compile-unverified** (no Android SDK was available to the
++> agent); see the report's verification section before building or shipping.
++
+ ## License
+ 
+ ```text
+diff --git a/build/moz.configure/android-sdk.configure b/build/moz.configure/android-sdk.configure
+index 93ee443c9..9d0c39871 100644
+--- a/build/moz.configure/android-sdk.configure
++++ b/build/moz.configure/android-sdk.configure
+@@ -157,7 +157,7 @@ def android_sdk_version():
+         compile_sdk_major_version=compile_sdk_major_version,
+         compile_sdk_minor_version=compile_sdk_minor_version,
+         target_sdk_version="37",
+-        min_sdk_version="26",
++        min_sdk_version="24",
+     )
+ 
+ 
+diff --git a/docs/android24-migration/FINAL_REPORT.md b/docs/android24-migration/FINAL_REPORT.md
+new file mode 100644
+index 000000000..118ce8f5a
+--- /dev/null
++++ b/docs/android24-migration/FINAL_REPORT.md
+@@ -0,0 +1,168 @@
++# Waterfox Android 端全量降级迁移（版本 B）—— 最终报告
++
++**分支:** `android24-full-migration`（基线 main @ 427cd34663602950a8d8621a11c7aa273e7a3406, Gecko 160）
++**目标:** main 的完整 Android 端（App 层 + GeckoView）运行于 Android 7.0（API 24），不牺牲 1.2.x 功能
++**执行:** AI（superpowers 工作流：计划 → 扫描评估 → 分批实施 → 静态验证）
++**日期:** 2026-11-07
++
++---
++
++## 一、判定标准四问（交接要求，先回答）
++
++### 1. `min_sdk_version` 最终值？`coreLibraryDesugaring` 是否已恢复？
++
++- **min_sdk_version = "24"**【已验证】`build/moz.configure/android-sdk.configure:160`，
++  targetSdk 保持 37 未动。经 `MOZ_ANDROID_MIN_SDK_VERSION` → gradle.py → shared-settings.gradle
++  链路分发到 GeckoView / Fenix / AC（分发链路已核验）。
++- **coreLibraryDesugaring 已恢复**【已验证配置存在；编译行为未验证】三处与 1.1.x 同构：
++  - `gradle/libs.versions.toml`: `desugar-jdk-libs = "2.1.5"`（与 archive-1.1 相同版本；
++    其 minCompileSdk 34 ≤ 当前 compileSdk 37，minSdk 21 ≤ 24，与 Kotlin/AGP 无耦合）
++  - `fenix/app/build.gradle`: compileOptions + coreLibraryDesugaring
++  - `AC push-firebase/build.gradle`: 同上
++  - 机制说明【推断，与 1.1.x 同构】：AC 其余模块（awesomebar/prompts/protection-dashboard/support-utils）
++    直接使用 java.time 但 AAR 内是 .class，最终由 app 端 R8/D8 全量脱糖兜底——1.1.9 即此结构。
++
++### 2. main 里还有多少处「需要版本判断但判断缺失」的 API 26+ 调用点？
++
++**修复前（本报告 Phase 1 全量扫描）：19 处 P0 崩溃点 + 1 处功能错误 + 1 处静默禁用**，清单：
++
++| 类别 | 数量 | 明细 |
++|---|---|---|
++| GeckoView API26+ 方法/类无防护 | 4 文件 5 处 | GeckoView.java(autofill delegate)、CrashHandler(startForegroundService)、GeckoRuntimeSettings/SessionAccessibility/WebAuthnUtils(String.join ×3) |
++| GeckoView API25 字段无防护 | 1 处 | GeckoEditable(contentMimeTypes) |
++| 通知渠道（API 26 类）无防护 | 13 文件 | AC 7（ktx 封装、media、downloads、webnotifications、crash、pwa、base ext）+ fenix 5 + focus 1 |
++| 振动 API26+ 无防护 | 1 处 | AC support/ktx Vibrator.kt |
++| DRM 功能错误（N_MR1 判断缺失） | 1 处 | CodecProxy.supportsCBCS |
++| 渠道检查静默禁用 | 1 处 | support/base isNotificationChannelEnabled（API<26 恒 false → 营销通知静默关闭） |
++
++**修复后（静态复扫）**：以上全部处理完毕。复扫输出：
++- `String.join` 在 geckoview src/main = 0 处（已全部 TextUtils.join）
++- 无防护 `NotificationChannel(` 构造 = 0 处（全部进入 `SDK_INT >= O` 分支）
++- 低档位 VERSION_CODES 恰为本次还原的 3 处 N_MR1
++- **剩余风险【未验证】**：lint `NewApi` 级别的深层调用（如 kotlinx/第三方库字节码内的 26+ 调用）
++  无法在无 SDK 沙箱中穷尽，需有环境机器跑 `./mach lint` / gradle `lintDebug` 确认。
++
++### 3. 有没有 API 24 上根本不存在该能力的功能？（必须告知，不能默默跳过）
++
++| 功能 | API 24 行为 | 处理方式 |
++|---|---|---|
++| Android 系统级 Autofill（设置里的自动填充服务） | 系统无此能力（API 26+） | GeckoView autofill delegate 置空（与 1.1.x 行为完全一致）；网页内表单自动填充不受影响 |
++| 通知渠道（按渠道开关/设置页） | 概念不存在 | 通知本身全部可用（NotificationCompat）；用户只能整体开关通知，不能按渠道管理 |
++| 画中画 PiP | 系统无此能力（API 26+） | `hasSystemFeature` 自动返回 false，无崩溃、自动降级（上游原设计） |
++| 隐私报告周报通知 | 通知可发，但无渠道管理 | 已修复 availability 逻辑，API 24 上正常发送（不静默删功能） |
++| 营销通知 | 通知可发 | 已修复 isNotificationChannelEnabled 回退，API 24 上正常判定 |
++
++### 4. AndroidX 最终降级了哪几个库、降到什么版本、为什么？
++
++**一个都没降。零降级。**【已验证】
++- 实测依据：脚本批量下载 `gradle/libs.versions.toml` 全部 androidx 直接依赖 + compose-bom
++  2026.09.00 对齐子库共 **89 个 AAR**，解析各自 AndroidManifest 的 `minSdkVersion`：
++  分布 = 14(6) / 19(2) / 21(24) / 23(47) / **24(10)**，**最大值恰好 24**（navigation 2.10.2、
++  work 2.12.0、emoji2 1.7.0、benchmark 1.5.0、navigation3 1.2.0——均为 2026-07 后按 AndroidX
++  新政 minSdk 23→24 的版本）。
++- 背景：AndroidX 官方 minSdk 时间线 19(2023)→21(2024)→23(2025-06)→**24(2026-07)**，
++  main 的 2026.09 档依赖恰好落在 24 上。
++- 12 个未解析项均为 JAR/构建期插件（annotation、collection、room-compiler 等），无 minSdk 概念。
++- 明细数据：`phase3_androidx_minsdk.json`。
++
++---
++
++## 二、完整 diff 摘要（26 文件，+274/−125）
++
++### 构建基础设施（4 文件）
++| 文件 | 改动 | 理由 / API 级别 |
++|---|---|---|
++| `build/moz.configure/android-sdk.configure` | minSdk 26→24 | 全局唯一 minSdk 来源；targetSdk 37 不动 |
++| `gradle/libs.versions.toml` | +desugar-jdk-libs 2.1.5（versions + libraries 两段） | java.time 在 API 24 需 desugaring（上游 Bug 1969392 移除后恢复） |
++| `mobile/android/fenix/app/build.gradle` | +compileOptions(coreLibraryDesugaringEnabled) +coreLibraryDesugaring 依赖 | 同上；app 是最终打包端，R8/D8 对全依赖树脱糖 |
++| `mobile/android/android-components/.../push-firebase/build.gradle` | 同 fenix 两处 | 1.1.x 原有配置原样恢复 |
++
++### GeckoView（8 文件）
++| 文件 | 改动 | API 问题 |
++|---|---|---|
++| `GeckoEditable.java` | contentMimeTypes 加 `>= N_MR1` | API 25 字段，直接赋值必崩（NoSuchFieldError） |
++| `GeckoView.java` | autofill delegate 加 `>= 26` 分支 + 空 Delegate | AndroidAutofillDelegate 引用 API 26 类 AutofillManager |
++| `CrashHandler.java` | startForegroundService 加 `>= 26` else startService | API 26 方法 |
++| `GeckoRuntimeSettings.java` | String.join → TextUtils.join | API 26 方法（DoH 排除域名） |
++| `SessionAccessibility.java` | 同上 | API 26 方法（无障碍内容描述） |
++| `WebAuthnUtils.java` | 同上 + import | API 26 方法（WebAuthn 日志） |
++| `CodecProxy.java` | 还原 supportsCBCS()（`>= N_MR1`） | API 24 CBCS DRM bug 规避（ExoPlayer#4022），功能正确性 |
++| `GeckoInputConnection.java` | 恢复 @TargetApi(N_MR1) | lint 语义（运行时懒加载安全，1.1.x 同构实证） |
++
++### Android Components（8 文件）
++| 文件 | 改动 | API 问题 |
++|---|---|---|
++| `support/ktx .../notification/Notification.kt` | ensureNotificationChannelExists 加 `>= O` | 渠道构造（API 26 类）；修复 media/addons/privatemode 全部调用方 |
++| `support/ktx .../os/Vibrator.kt` | `>= O ? VibrationEffect : vibrate(ms)` | VibrationEffect API 26 |
++| `support/base .../ext/NotificationManagerCompat.kt` | isNotificationChannelEnabled `< O` 回退 app 级检查 | API<26 渠道恒 null 导致营销通知静默关闭 |
++| `feature/media MediaNotificationChannel.kt` | 渠道创建/删除加 `>= O` | API 26 |
++| `feature/downloads DownloadNotification.kt` | isChannelEnabled/ensureChannelExists 加 `>= O` | getNotificationChannel/构造 均 API 26 |
++| `feature/webnotifications WebNotificationFeature.kt` | 渠道创建加 `>= O` | API 26；网站通知 API<26 无渠道但仍可发 |
++| `feature/pwa WebAppSiteControlsFeature.kt` | Builder 分支（双参/单参构造）+ setBadgeIconType 防护 + 渠道防护 | 双参 Notification.Builder 与 setBadgeIconType 均 API 26 |
++| `lib/crash CrashNotification.kt` | 渠道创建加 `>= O` | API 26 |
++
++### Fenix（6 文件）/ Focus（1 文件）
++| 文件 | 改动 | API 问题 |
++|---|---|---|
++| `fenix components/NotificationManager.kt` | init 渠道创建加 `>= O` | API 26 |
++| `fenix perf/ProfilerService.kt` | onCreate 渠道创建加 `>= O` | API 26 |
++| `fenix customtabs/PoweredByNotification.kt` | ensureChannelExists 加 `>= O` | API 26 |
++| `fenix onboarding/MarketingNotificationHelper.kt` | 渠道 get/create 加 `>= O` | getNotificationChannel + 构造均 API 26 |
++| `fenix privacyreport/PrivacyReportNotificationHelper.kt` | 渠道创建加 `>= O`；availability 在 `< O` 只查 app 级开关 | API 26；同时避免周报通知在 API 24 静默停发 |
++| `focus session/SessionNotificationService.kt` | 渠道创建加 `>= O` | API 26 |
++
++完整补丁：`android24-full-migration.patch`（840 行，可 `git apply` 复现）。
++
++---
++
++## 三、与交接提示词预期不同的实测结论（重要）
++
++| 交接预期 | 实测结论 | 依据 |
++|---|---|---|
++| GeckoMediaDrmBridge V21/V23 拆分需还原 | **不需要** | 合并版(806 行)语义=V23：最高 API 调用为 setOnKeyStatusChangeListener/queryKeyStatus（均 API 23 ≤ 24）；V21 路径(≤22) API 24 用不到 |
++| LollipopAsyncCodec/JellyBeanAsyncCodec 需还原 | **不需要** | AsyncCodecImpl=LollipopAsyncCodec 改名；最高调用 CodecException.getErrorCode()(API 23)；API 24 ≥ LOLLIPOP_MR1 走此路径 |
++| CrashedProcessType 需还原 | **不需要** | fenix/AC 调用方已 0 引用（rg 全量验证）；该 API 形态与 Android API 级别无关 |
++| PermissionPromptResponse/权限 API 需还原旧签名 | **不需要** | 新签名(addOptionalPermissions 带 dataCollection)是 Gecko 142 权限系统演进，API 24 功能等价 |
++| AndroidX 需逐库降级挡路库 | **零降级** | 89 个 AAR 实测 minSdk ≤ 24（见判定四问 #4） |
++| AGP 8.13.2 / Kotlin 2.3.0 | 实际 **AGP 9.4.1 / Kotlin 2.4.21** | main 在交接后又前进；本工作按实测基线执行 |
++| archive 低档位分支 65 处需移植 | **实际仅需 3 处** | API 24 恰落在绝大多数被删分支的真路径上（`>=M/23`、`>=N/24`、`>=LOLLIPOP_MR1/22` 均为真）；只有 `>=N_MR1/25`（3 处）与 26+ 调用点需要处理。已抽查 GeckoAppShell/Clipboard 证实上游删除=保留真路径原样 |
++
++**方法论说明**：被删分支的还原判定表——`>=M/23`/`>=N(24)` 在 API 24 为真（走 main 现状路径，零还原）；`>=N_MR1(25)` 为假（else 路径需还原，共 3 处）；API 26+ 无条件调用（能力缺失，逐点处理，共 19 处）。
++
++---
++
++## 四、验证状态分类（诚实声明）
++
++### 【已验证】（rg/git 实际输出，可复现）
++- 基线 SHA、minSdk 分发链路、desugaring 配置位置
++- 全部 P0 调用点的存在性（修改前）与防护完备性（修改后复扫）
++- AndroidX 89 个 AAR 的 minSdkVersion（下载解析 AXML）
++- DRM/AsyncCodec/autofill-service 等零修改项的 API 级别论证
++- diff 全量 review（26 文件逐一手改，无整文件覆盖）
++
++### 【推断】（代码语义推理，未编译）
++- 各防护分支的 Kotlin/Java 语法正确性（人工 review，无编译器验证）
++- desugaring 对 AC 模块 java.time 的兜底机制（与 1.1.9 同构）
++- TextUtils.join 替换在所有 3 处的类型适配（Iterable/CharSequence 检查过）
++
++### 【未验证】（沙箱无 Android SDK/NDK，无法执行）
++- `./mach build-android` / `./mach package-android` 编译
++- lint NewApi 全量检测（深层第三方字节码调用）
++- API 24 设备/模拟器运行时行为
++
++**有环境机器上的验证命令：**
++```bash
++git checkout android24-full-migration
++./mach build-android          # 编译 GeckoView + Fenix
++./mach package-android        # 打包 APK
++./mach android-api-lint       # 或 gradle :app:lintDebug（NewApi 检测）
++```
++
++---
++
++## 五、已知残余风险（下一步建议）
++
++1. **lint 全量**：跑 `lintDebug` 看 NewApi 报告——尤其 AC 里 1.2.x 新增组件（feature/autofill 服务、glance、ipprotection 等）的字节码级调用。
++2. **compose 运行时**：compose ui 1.12.1 minSdk 23 ✓，但 compose 内部对 API 24 的行为差异（如字体回退）需真机回归。
++3. **moz.build 层**：minSdk 变化会影响 NDK 编译的 `MOZ_ANDROID_MIN_SDK_VERSION` 传递（geckoview buildConfig），Gecko C++ 侧理论上无需改动（mobile/android 内无 __ANDROID_API__ < 24 的条件编译，已扫描），但需编译确认。
++4. **testFixtures/androidTest**：测试代码里还有大量 API 26+ 调用（本次未处理——测试不进 APK；在 API 24 真机跑 instrumentation test 会失败，属预期）。
+diff --git a/docs/android24-migration/phase1_report.md b/docs/android24-migration/phase1_report.md
+new file mode 100644
+index 000000000..708a256aa
+--- /dev/null
++++ b/docs/android24-migration/phase1_report.md
+@@ -0,0 +1,121 @@
++# Phase 1 全貌扫描报告（main @427cd346, Gecko 160, minSdk 26）
++
++> 扫描时间: 2026-11-07 | 方法: rg 限定目录扫描 + git diff 对照 archive-1.1 (@c24727e, minSdk 21, Gecko 140.8)
++> 复现: bash scripts/scan1a_api26_calls.sh, scripts/scan1c_archive_ref.sh（输出存于本目录）
++> 结论分级:【已验证】= rg/git 实际输出证实;【推断】= 代码语义推理, 未编译验证
++
++## 0. 基线复核（替代交接提示词旧数字）
++
++| 项 | 交接提示词 | 实测 main | 结论 |
++|---|---|---|---|
++| main SHA | 427cd3466360 | 427cd3466360 ✓ | 一致 |
++| archive-1.1 SHA | c24727e30ca5 | c24727e30ca5 ✓ | 一致 |
++| minSdk | 26 | 26 (android-sdk.configure:160) ✓ | 一致 |
++| AGP | 8.13.2 | **9.4.1** | main 已前进 |
++| Kotlin | 2.3.0 | **2.4.21** | main 已前进 |
++| coreLibraryDesugaring | 已移除 | 已移除（0 处引用）✓ | 一致 |
++| GeckoView VERSION_CODES 档位 | Q15/UDC8/S8/P7/R5/O_MR1_1/BAKLAVA1 | 完全一致 ✓ | 一致 |
++| GeckoView N/M/LOLLIPOP 残留 | 0 | 0 ✓ | 一致（低档位被删而非跳过） |
++| C++ __ANDROID_API__ (mobile/android 内) | ~14 处 | **0 处** | 其余在未检出目录（widget/android 等），按红线不动 |
++
++archive-1.1 geckoview 低档位分布（65 处总计）: N=14, M=12, N_MR1=4, LOLLIPOP_MR1=1, O=9, Q=7, UDC=7, S=4, P=4, R=3 — 与交接吻合。
++
++## 1. 【核心方法论】API 24 视角的分支还原判定
++
++对 archive-1.1 中被删的 `SDK_INT` 分支逐档分析，**只需还原满足以下条件的分支**：
++
++| 被删判断 | API 24 走哪条路径 | main 现状（上游保留的路径） | 是否需还原 |
++|---|---|---|---|
++| `>= LOLLIPOP_MR1(22)` | 真 | 真路径 | 否 |
++| `>= M(23)` | 真 | 真路径 | 否 |
++| `>= N(24)` | 真 | 真路径 | 否 |
++| `>= N_MR1(25)` | **假（else）** | 真路径 | **是（3 处）** |
++| `>= O(26)` / 无判断直接调用 | **能力不存在** | 直接调用 | **是（逐点处理）** |
++
++推论：GeckoView 65 处低档位分支中，**绝大多数无需还原**（API 24 恰好落在上游保留的真路径上）。真正要做的只有：N_MR1 的 3 处 + API 26+ 无防护调用点。
++
++## 2. 【已验证】P0 运行时崩溃点（API 24 上必然崩溃，必须修）
++
++### GeckoView（org.mozilla.geckoview / org.mozilla.gecko）
++| # | 文件 | 问题 | 修法（参照 archive-1.1） |
++|---|---|---|---|
++| 1 | geckoview/GeckoEditable.java:2112 | `outAttrs.contentMimeTypes` 是 API 25 字段，无判断直接赋值 → NoSuchFieldError | 加回 `SDK_INT >= N_MR1 &&` |
++| 2 | geckoview/GeckoView.java | `AndroidAutofillDelegate`（引用 API 26 类 AutofillManager）构造时无条件 new | 加回 `SDK_INT >= 26` 判断 + 空 Delegate fallback |
++| 3 | geckoview/CrashHandler.java:396 | framework `context.startForegroundService()`（API 26 方法） | 加 `SDK_INT >= 26` else `startService()` |
++| 4 | geckoview/GeckoRuntimeSettings.java:2401 | `String.join(",", …)`（API 26 方法） | TextUtils.join |
++| 5 | geckoview/SessionAccessibility.java:810 | 同上 | 同上 |
++| 6 | geckoview/WebAuthnUtils.java:239 | 同上 | 同上 |
++
++### App 层（通知渠道 = API 26 类，全部无防护直接构造）
++| # | 模块 | 文件 | 修法 |
++|---|---|---|---|
++| 7 | AC support/ktx | notification/Notification.kt `ensureNotificationChannelExists` | 加回 `SDK_INT >= O` 包裹（archive 原样） |
++| 8 | AC support/ktx | os/Vibrator.kt `vibrateOneShot` | 加回 `>= O ? VibrationEffect : vibrate(ms)`（archive 原样） |
++| 9 | AC feature/media | MediaNotificationChannel.kt | 渠道构造加 `>= O` 防护 |
++| 10 | AC feature/downloads | DownloadNotification.kt:235,249 | `getNotificationChannel`/构造加防护 |
++| 11 | AC feature/webnotifications | WebNotificationFeature.kt:124-132 | 同上（网站通知 API<26 降级为无渠道通知） |
++| 12 | AC lib/crash | CrashNotification.kt:115-121 | 同上（崩溃通知在 API<26 不建渠道） |
++| 13 | AC feature/pwa | WebAppSiteControlsFeature.kt:138 | framework `Notification.Builder(ctx, id)`(26+) → NotificationCompat.Builder |
++| 14 | fenix | components/NotificationManager.kt:51,184-197 | init 渠道创建加防护 |
++| 15 | fenix | perf/ProfilerService.kt（4 处） | 同上 |
++| 16 | fenix | customtabs/PoweredByNotification.kt（2 处） | 同上 |
++| 17 | fenix | onboarding/MarketingNotificationHelper.kt（3 处） | 同上 |
++| 18 | fenix | privacyreport/PrivacyReportNotificationHelper.kt（4 处） | 同上 |
++| 19 | focus | session/SessionNotificationService.kt:191-211 | 同上 |
++
++**通知调用方自动收敛**（走封装，修 #7/#9 后无需动）：MediaNotification.kt、RecordingDevicesMiddleware.kt、AddonUpdater.kt、AbstractPrivateNotificationService.kt。
++
++## 3. 【已验证】功能正确性问题（不崩溃但行为错）
++
++| 文件 | 问题 | 修法 |
++|---|---|---|
++| geckoview/media/CodecProxy.java:489 | `setCryptoPatternIfNeeded` 丢了 `supportsCBCS()`（`>= N_MR1`）判断 → API 24 会启用有 bug 的 CBCS DRM 路径（ExoPlayer#4022） | 还原 archive 的 supportsCBCS() 判断 |
++
++## 4. 【已验证】零修改项（重要：与交接提示词预期不同的实测结论）
++
++| 项 | 交接预期 | 实测结论 | 依据 |
++|---|---|---|---|
++| GeckoMediaDrmBridge V21/V23 拆分 | 重点还原 | **零修改** | main 合并版(806行)语义=V23：最高 API 调用为 `setOnKeyStatusChangeListener`/`queryKeyStatus`（均 API 23）≤ 24 |
++| LollipopAsyncCodec/JellyBeanAsyncCodec | 还原 | **零修改** | AsyncCodecImpl=LollipopAsyncCodec 改名；最高调用 `CodecException.getErrorCode()`(API 23)；JellyBean 路径(≤21)API 24 不需要 |
++| MediaDrmProxy V21 桥选择 | 还原 | **零修改** | API 24 走 V23 语义=main 现状 |
++| CrashedProcessType | 还原 | **不还原** | 调用方(fenix/AC src/main)已 0 引用；API 形态与运行时无关 |
++| PermissionPromptResponse/权限 API 签名 | 还原 | **不还原** | 新签名是 Gecko 142 权限系统重构，与 Android API 级别无关，API 24 功能等价 |
++| GeckoAppShell/Clipboard/SpeechSynthesis/GeckoSession/FormatParam/BasicSelectionActionDelegate/GeckoDragAndDrop 的 N/M/LOLLIPOP 分支 | 列为移植目标 | **零修改** | API 24 恒走真路径（=main 现状），N=24 恰好满足 |
++| AsyncCodecFactory | — | **无需还原** | API 24 >= LOLLIPOP_MR1 走 LollipopAsyncCodec 路径 |
++| ShortcutManager | — | **零修改** | 全部经 androidx `ShortcutManagerCompat`（API 19+ 兼容） |
++| PictureInPicture | — | **零修改（自动降级）** | `hasSystemFeature(FEATURE_PICTURE_IN_PICTURE)` API 24 返回 false 短路 |
++| AC feature/autofill（Android autofill service） | — | **零修改（懒加载）** | manifest service 声明在 API<26 不被系统 bind，类不加载；archive(minSdk 21)同构仅靠 @RequiresApi 注解 |
++| ContextCompat.startForegroundService（AC 3 处+GeckoJavaSampler） | — | **零修改** | androidx core 内部已做 < 26 回退 startService |
++| GeckoInputConnection.commitContent | N_MR1 目标 | **零修改（可选拿回注解）** | 方法签名类懒加载+系统不调用；archive(minSdk 21) 同构实证 |
++
++## 5. 【已验证】API 24 上能力不存在 → 功能降级告知清单
++
++| 功能 | API 24 行为 | 说明 |
++|---|---|---|
++| Android Autofill（系统级自动填充服务） | 不可用（系统无此能力，API 26+） | GeckoView autofill delegate 置空（与 archive 行为一致）；表单内自动填充不受影响 |
++| 通知渠道（channel 分类/设置页） | 概念不存在 | 通知本身正常（NotificationCompat 忽略 channelId）；用户不能按渠道管理通知 |
++| 画中画 PiP | 不可用（API 26+） | hasSystemFeature 自动 false，无崩溃 |
++| 前台服务类型行为 | startService 回退 | 后台限制更宽松（API 24 无后台执行限制的 26+ 语义） |
++
++## 6. java.time 使用面（desugaring 恢复后全部解决）
++
++- src/main 产品代码 16 文件：AC feature/awesomebar(3)、feature/prompts(1)、feature/protection-dashboard(1)、support/utils(1)、plugins/config(1，构建期 JVM 不需 desugar)；fenix 8
++- GeckoView src/main：0 文件（不依赖 desugaring）
++- 需启用 coreLibraryDesugaring 的模块：fenix/app、AC feature/awesomebar、feature/prompts、feature/protection-dashboard、support/utils、push-firebase（后者按 archive 原配置恢复）
++
++## 7. 工作量评估（Phase 1 硬性交付）
++
++| 项 | 规模 | 风险 |
++|---|---|---|
++| Phase 2 基础设施 | 6 个构建文件 | 低；desugar-jdk-libs 2.1.5 需与 Kotlin 2.4.21/AGP 9.4.1 兼容性确认 |
++| Phase 3 AndroidX 门槛 | 逐库查 minSdk（约 30 库） | 中；2025-2026 版本库可能有 minSdk>24，需逐个 POM 验证 |
++| Phase 4 GeckoView | 6 文件（清单 §2 上半 + §3） | 低-中；均为局部小改，archive 有参照 |
++| Phase 4 App 层通知 | 13 文件（清单 §2 下半） | 低-中；模式统一（加 SDK>=O 防护） |
++| Phase 5 验证 | 沙箱无 SDK → 静态验证 + 标注未验证 | 编译【未验证】 |
++
++**总体判断：工作量可控，无需停下来调整方案。** 与交接提示词预期的「把 archive-1.1 的 65 处分支 + 211 文件移植回来」相比，实测需改动面收敛到约 25 个代码文件 + 6 个构建文件 —— 因为 API 24 恰好落在绝大多数已删分支的真路径上，真正的缺口集中在 N_MR1(25) / O(26) 两档与通知渠道。
++
++## 8. AndroidX 待查清单（Phase 3 输入）
++
++gradle/libs.versions.toml 全表见 phase3 输出；重点核查（2025-2026 最新版）：
++activity 1.13.0 / appcompat 1.8.0 / core 1.19.1 / lifecycle 2.11.0 / compose-bom 2026.09.00 / navigation 2.10.2 / fragment / work / room / datastore / biometric 1.1.0 / browser 1.10.0 等。
+diff --git a/docs/android24-migration/phase3_androidx_minsdk.json b/docs/android24-migration/phase3_androidx_minsdk.json
+new file mode 100644
+index 000000000..064aab64c
+--- /dev/null
++++ b/docs/android24-migration/phase3_androidx_minsdk.json
+@@ -0,0 +1,107 @@
++{
++  "results": {
++    "androidx.activity:activity:1.13.0": 23,
++    "androidx.activity:activity-compose:1.13.0": 23,
++    "androidx.annotation:annotation-experimental:1.6.0": 23,
++    "androidx.appcompat:appcompat:1.8.0": 23,
++    "androidx.arch.core:core-testing:2.2.0": 14,
++    "androidx.autofill:autofill:1.3.0": 21,
++    "androidx.benchmark:benchmark-junit4:1.5.0": 24,
++    "androidx.benchmark:benchmark-macro-junit4:1.5.0": 24,
++    "androidx.biometric:biometric:1.1.0": 14,
++    "androidx.browser:browser:1.10.0": 23,
++    "androidx.cardview:cardview:1.0.0": 14,
++    "androidx.constraintlayout:constraintlayout:2.2.2": 21,
++    "androidx.constraintlayout:constraintlayout-compose:1.1.2": 21,
++    "androidx.coordinatorlayout:coordinatorlayout:1.3.0": 21,
++    "androidx.core:core:1.19.1": 23,
++    "androidx.core:core-ktx:1.19.1": 23,
++    "androidx.core:core-splashscreen:1.2.0": 21,
++    "androidx.datastore:datastore:1.2.1": 23,
++    "androidx.datastore:datastore-core:1.2.1": 23,
++    "androidx.datastore:datastore-preferences:1.2.1": 23,
++    "androidx.documentfile:documentfile:1.1.0": 21,
++    "androidx.drawerlayout:drawerlayout:1.2.0": 14,
++    "androidx.emoji2:emoji2:1.7.0": 24,
++    "androidx.exifinterface:exifinterface:1.4.2": 21,
++    "androidx.fragment:fragment:1.9.1": 23,
++    "androidx.fragment:fragment-compose:1.9.1": 23,
++    "androidx.fragment:fragment-ktx:1.9.1": 23,
++    "androidx.fragment:fragment-testing:1.9.1": 23,
++    "androidx.glance:glance-appwidget:1.2.0": 23,
++    "androidx.glance:glance-appwidget-preview:1.2.0": 23,
++    "androidx.glance:glance-preview:1.2.0": 23,
++    "androidx.lifecycle:lifecycle-runtime-compose:2.11.0": 23,
++    "androidx.lifecycle:lifecycle-livedata:2.11.0": 23,
++    "androidx.lifecycle:lifecycle-process:2.11.0": 23,
++    "androidx.lifecycle:lifecycle-runtime:2.11.0": 23,
++    "androidx.lifecycle:lifecycle-runtime-testing:2.11.0": 23,
++    "androidx.lifecycle:lifecycle-service:2.11.0": 23,
++    "androidx.lifecycle:lifecycle-viewmodel:2.11.0": 23,
++    "androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0": 23,
++    "androidx.media:media:1.7.1": 19,
++    "androidx.media3:media3-common:1.11.1": 23,
++    "androidx.media3:media3-datasource:1.11.1": 23,
++    "androidx.media3:media3-decoder:1.11.1": 23,
++    "androidx.media3:media3-exoplayer:1.11.1": 23,
++    "androidx.media3:media3-exoplayer-hls:1.11.1": 23,
++    "androidx.media3:media3-session:1.11.1": 23,
++    "androidx.navigation:navigation-compose:2.10.2": 24,
++    "androidx.navigation:navigation-fragment:2.10.2": 24,
++    "androidx.navigation:navigation-ui:2.10.2": 24,
++    "androidx.navigation3:navigation3-runtime:1.2.0": 24,
++    "androidx.navigation3:navigation3-ui:1.2.0": 24,
++    "androidx.paging:paging-runtime:3.5.2": 23,
++    "androidx.palette:palette-ktx:1.0.0": 14,
++    "androidx.preference:preference:1.2.1": 14,
++    "androidx.profileinstaller:profileinstaller:1.4.1": 21,
++    "androidx.recyclerview:recyclerview:1.4.0": 21,
++    "androidx.room:room-ktx:2.8.5": 23,
++    "androidx.room:room-testing:2.8.5": 23,
++    "androidx.savedstate:savedstate:1.5.0": 23,
++    "androidx.startup:startup-runtime:1.2.0": 21,
++    "androidx.swiperefreshlayout:swiperefreshlayout:1.2.0": 21,
++    "androidx.test:core-ktx:1.7.0": 21,
++    "androidx.test.espresso:espresso-contrib:3.7.0": 21,
++    "androidx.test.espresso:espresso-core:3.7.0": 21,
++    "androidx.test.espresso:espresso-idling-resource:3.7.0": 21,
++    "androidx.test.espresso:espresso-intents:3.7.0": 21,
++    "androidx.test.espresso:espresso-web:3.7.0": 21,
++    "androidx.test.ext:junit-ktx:1.3.0": 21,
++    "androidx.test:monitor:1.8.0": 21,
++    "androidx.test:rules:1.7.0": 21,
++    "androidx.test:runner:1.7.0": 21,
++    "androidx.test.uiautomator:uiautomator:2.4.0": 23,
++    "androidx.transition:transition:1.7.2": 23,
++    "androidx.viewpager2:viewpager2:1.1.0": 19,
++    "androidx.work:work-runtime:2.12.0": 24,
++    "androidx.work:work-testing:2.12.0": 24,
++    "androidx.compose.animation:animation:1.12.1": 23,
++    "androidx.compose.foundation:foundation:1.12.1": 23,
++    "androidx.compose.foundation:foundation-layout:1.12.1": 23,
++    "androidx.compose.material:material:1.12.1": 23,
++    "androidx.compose.material:material-icons-core:1.7.8": 21,
++    "androidx.compose.material:material-icons-extended:1.7.8": 21,
++    "androidx.compose.material3:material3:1.4.0": 21,
++    "androidx.compose.runtime:runtime:1.12.1": 23,
++    "androidx.compose.ui:ui:1.12.1": 23,
++    "androidx.compose.ui:ui-graphics:1.12.1": 23,
++    "androidx.compose.ui:ui-text:1.12.1": 23,
++    "androidx.compose.ui:ui-tooling:1.12.1": 23,
++    "androidx.compose.ui:ui-unit:1.12.1": 23
++  },
++  "errors": {
++    "androidx.annotation:annotation:1.11.0": "download-fail: HTTPError",
++    "androidx.arch.core:core-common:2.2.0": "download-fail: HTTPError",
++    "androidx.benchmark:benchmark-gradle-plugin:1.5.0": "download-fail: HTTPError",
++    "androidx.collection:collection:1.7.0": "download-fail: HTTPError",
++    "androidx.compose:compose-bom:2026.09.00": "download-fail: HTTPError",
++    "androidx.concurrent:concurrent-futures-ktx:1.3.0": "download-fail: HTTPError",
++    "androidx.lifecycle:lifecycle-common:2.11.0": "download-fail: HTTPError",
++    "androidx.lint:lint-gradle:1.0.0": "download-fail: HTTPError",
++    "androidx.navigation:navigation-safe-args-gradle-plugin:2.10.2": "download-fail: HTTPError",
++    "androidx.room:room-compiler:2.8.5": "download-fail: HTTPError",
++    "androidx.test:orchestrator:1.6.1": "download-fail: HTTPError",
++    "androidx.window:window-core:1.5.1": "download-fail: HTTPError"
++  }
++}
+\ No newline at end of file
+diff --git a/docs/android24-migration/phase3_androidx_minsdk.py b/docs/android24-migration/phase3_androidx_minsdk.py
+new file mode 100644
+index 000000000..3fb329e6e
+--- /dev/null
++++ b/docs/android24-migration/phase3_androidx_minsdk.py
+@@ -0,0 +1,129 @@
++#!/usr/bin/env python3
++"""Phase 3: 从 libs.versions.toml 提取 androidx 依赖, 下载 AAR 实测 minSdkVersion."""
++import re, json, sys, zipfile, io, urllib.request, xml.etree.ElementTree as ET
++from pathlib import Path
++
++REPO = Path("/home/z/my-project/Waterfox-Android")
++TOML = REPO / "gradle/libs.versions.toml"
++GM = "https://dl.google.com/android/maven2"
++NS = "{http://schemas.android.com/apk/res/android}"
++
++text = TOML.read_text()
++versions, libraries = {}, {}
++section = None
++for line in text.splitlines():
++    s = line.strip()
++    if s.startswith("[") and s.endswith("]"):
++        section = s[1:-1]
++        continue
++    m = re.match(r'^([A-Za-z0-9_.-]+)\s*=\s*"(.*)"$', s)
++    if m and section == "versions":
++        versions[m.group(1)] = m.group(2)
++    m = re.match(r'^([A-Za-z0-9_.-]+)\s*=\s*\{(.*)\}$', s)
++    if m and section == "libraries":
++        body = m.group(2)
++        mod = re.search(r'module\s*=\s*"([^"]+)"', body)  # "group:artifact"
++        g = re.search(r'group\s*=\s*"([^"]+)"', body)
++        n = re.search(r'name\s*=\s*"([^"]+)"', body)
++        v = re.search(r'version\.ref\s*=\s*"([^"]+)"', body)
++        vm = re.search(r'version\s*=\s*"([^"]+)"', body)
++        if mod:
++            gg, _, nn = mod.group(1).partition(":")
++            group, artifact = gg, nn
++        elif g and n:
++            group, artifact = g.group(1), n.group(1)
++        else:
++            continue
++        ver = versions.get(v.group(1)) if v else (vm.group(1) if vm else None)
++        libraries[m.group(1)] = (group, artifact, ver)
++
++ax = {k: v for k, v in libraries.items() if v[0].startswith("androidx.")}
++print(f"androidx 直接依赖: {len(ax)} 个", file=sys.stderr)
++
++def parse_manifest(axml_bytes):
++    """AXML 二进制或纯文本 XML -> minSdkVersion int 或 None."""
++    # 先试纯文本
++    if axml_bytes[:5] == b"<?xml" or axml_bytes[:9] == b"<manifest":
++        root = ET.fromstring(axml_bytes.decode("utf-8", "replace"))
++    else:
++        from pyaxmlparser import axmlprinter
++        pp = axmlprinter.AXMLPrinter(axml_bytes)
++        root = ET.fromstring(pp.get_buff().decode("utf-8", "replace"))
++    sdk = root.find("uses-sdk")
++    if sdk is None:
++        return None
++    raw = sdk.get(NS + "minSdkVersion", "1")
++    return int(raw)
++
++def get_min_sdk(group, artifact, version):
++    url = f"{GM}/{group.replace('.', '/')}/{artifact}/{version}/{artifact}-{version}.aar"
++    try:
++        req = urllib.request.Request(url, headers={"User-Agent": "phase3-scan"})
++        data = urllib.request.urlopen(req, timeout=60).read()
++    except Exception as e:
++        return None, f"download-fail: {type(e).__name__}"
++    try:
++        with zipfile.ZipFile(io.BytesIO(data)) as z:
++            axml = z.read("AndroidManifest.xml")
++    except KeyError:
++        return None, "no-manifest"
++    try:
++        return parse_manifest(axml), "ok"
++    except Exception as e:
++        return None, f"parse-fail: {type(e).__name__}: {str(e)[:80]}"
++
++# compose-bom: POM 提取子库版本
++compose_targets = {}
++bom_ver = versions.get("compose-bom")
++if bom_ver:
++    bom_url = f"{GM}/androidx/compose/compose-bom/{bom_ver}/compose-bom-{bom_ver}.pom"
++    try:
++        req = urllib.request.Request(bom_url, headers={"User-Agent": "phase3-scan"})
++        pom = urllib.request.urlopen(req, timeout=60).read().decode()
++        for m in re.finditer(r"<artifactId>([\w.-]+)</artifactId>\s*<version>([^<]+)</version>", pom):
++            compose_targets[m.group(1)] = m.group(2)
++    except Exception as e:
++        print(f"BOM 下载失败: {e}", file=sys.stderr)
++print(f"compose-bom {bom_ver} 子库: {len(compose_targets)} 个", file=sys.stderr)
++
++results, errors = {}, {}
++for alias, (group, artifact, ver) in sorted(ax.items()):
++    if not ver:
++        continue
++    ms, status = get_min_sdk(group, artifact, ver)
++    key = f"{group}:{artifact}:{ver}"
++    (results if ms is not None else errors)[key] = ms if ms is not None else status
++
++CG = {"ui": "androidx.compose.ui", "ui-text": "androidx.compose.ui", "ui-graphics": "androidx.compose.ui",
++      "ui-unit": "androidx.compose.ui", "ui-tooling": "androidx.compose.ui",
++      "foundation": "androidx.compose.foundation", "foundation-layout": "androidx.compose.foundation",
++      "material3": "androidx.compose.material3", "material": "androidx.compose.material",
++      "material-icons-core": "androidx.compose.material", "material-icons-extended": "androidx.compose.material",
++      "runtime": "androidx.compose.runtime", "animation": "androidx.compose.animation"}
++for art, cver in compose_targets.items():
++    if art in CG:
++        ms, status = get_min_sdk(CG[art], art, cver)
++        key = f"{CG[art]}:{art}:{cver}"
++        if ms is None:
++            errors[key] = status
++        else:
++            results[key] = ms
++
++outdir = Path("/home/z/my-project/download/waterfox-android24-migration")
++outdir.mkdir(exist_ok=True, parents=True)
++(outdir / "phase3_androidx_minsdk.json").write_text(
++    json.dumps({"results": {k: v for k, v in results.items()},
++                "errors": errors}, indent=2, ensure_ascii=False))
++
++print("\n===== minSdk 实测结果 =====")
++over = {k: v for k, v in results.items() if isinstance(v, int) and v > 24}
++ok = {k: v for k, v in results.items() if isinstance(v, int) and v <= 24}
++print(f"\n[需处理] minSdk > 24: {len(over)} 个")
++for k, v in sorted(over.items()):
++    print(f"  {v}: {k}")
++print(f"\n[无需处理] minSdk <= 24: {len(ok)} 个")
++for k, v in sorted(ok.items()):
++    print(f"  {v}: {k}")
++print(f"\n[解析失败] {len(errors)} 个")
++for k, v in sorted(errors.items()):
++    print(f"  {v}: {k}")
+diff --git a/docs/android24-migration/scan1a_api26_calls.sh b/docs/android24-migration/scan1a_api26_calls.sh
+new file mode 100644
+index 000000000..b5ece2a52
+--- /dev/null
++++ b/docs/android24-migration/scan1a_api26_calls.sh
+@@ -0,0 +1,85 @@
++#!/bin/bash
++# Phase 1a: 扫描 main 中 API 26+ 专属调用点（产品代码 src/main 优先）
++# 用法: bash scan1a_api26_calls.sh <repo_root> <output_dir>
++REPO="${1:-/home/z/my-project/Waterfox-Android}"
++OUT="${2:-/home/z/my-project/download/waterfox-android24-migration}"
++MA=mobile/android
++cd "$REPO" || exit 1
++mkdir -p "$OUT"
++
++{
++echo "============================================================"
++echo " Phase 1a: main (427cd346, Gecko 160) API26+ 专属调用点扫描"
++echo " 时间: $(date -u +'%Y-%m-%d %H:%M UTC')  范围: mobile/android 产品代码"
++echo "============================================================"
++
++echo
++echo "## A. java.time 使用（src/main 产品代码，需 desugaring）"
++for mod in fenix/android-components/focus-android; do :; done
++echo "--- A1. 按 import java.time. 统计（src/main）---"
++rg -c '^import java\.time\.' --glob '*.{kt,java}' \
++   $MA/fenix $MA/android-components $MA/focus-android $MA/geckoview/src/main \
++   -g '!**/test/**' -g '!**/androidTest/**' 2>/dev/null | sort | head -100
++echo "--- A1 计数 ---"
++rg -l '^import java\.time\.' --glob '*.{kt,java}' \
++   $MA/fenix $MA/android-components $MA/focus-android $MA/geckoview/src/main \
++   -g '!**/test/**' -g '!**/androidTest/**' 2>/dev/null | wc -l
++
++echo
++echo "--- A2. 全部 java.time 直接 import 明细（含 test 供参考）---"
++rg -o '^import java\.time\.[A-Za-z]+' --glob '*.{kt,java}' \
++   $MA/fenix $MA/android-components $MA/focus-android $MA/geckoview/src/main 2>/dev/null \
++   | sed 's/.*import //' | sort | uniq -c | sort -rn | head -25
++
++echo
++echo "## B. NotificationChannel / 通知渠道（API 26+，src/main）"
++rg -l 'NotificationChannel|createNotificationChannel|NotificationChannelGroup' \
++   --glob '*.{kt,java}' \
++   $MA/fenix/app/src/main $MA/android-components/components \
++   $MA/focus-android/app/src/main $MA/geckoview/src/main 2>/dev/null | sort
++
++echo
++echo "## C. 其他常见 API 26+ 符号（src/main，逐一确认）"
++for sym in 'startForegroundService' 'AdaptiveIconDrawable' 'VibrationEffect' \
++           'PictureInPictureParams' 'WifiAware' 'isDeviceLocked' ; do
++  echo "--- C. $sym ---"
++  rg -l "$sym" --glob '*.{kt,java}' \
++     $MA/fenix/app/src/main $MA/android-components/components \
++     $MA/focus-android/app/src/main $MA/geckoview/src/main 2>/dev/null
++done
++
++echo
++echo "--- C7. String.join( (API 26+，排除 StringJoiner API24+) ---"
++rg -n 'String\.join\(' --glob '*.{kt,java}' \
++   $MA/fenix/app/src/main $MA/android-components/components \
++   $MA/focus-android/app/src/main $MA/geckoview/src/main 2>/dev/null | head -20
++
++echo
++echo "## D. main 中 VERSION_CODES 档位分布（全 mobile/android，src/main）"
++echo "--- D1. geckoview/src/main ---"
++rg -o 'VERSION_CODES\.[A-Z_0-9]+' --glob '*.{kt,java}' $MA/geckoview/src/main 2>/dev/null \
++   | sed 's/.*VERSION_CODES\.//' | sort | uniq -c | sort -rn
++echo "--- D2. fenix + AC + focus (src/main) ---"
++rg -o 'VERSION_CODES\.[A-Z_0-9]+' --glob '*.{kt,java}' \
++   $MA/fenix/app/src/main $MA/android-components/components \
++   $MA/focus-android/app/src/main 2>/dev/null \
++   | sed 's/.*VERSION_CODES\.//' | sort | uniq -c | sort -rn
++
++echo
++echo "## E. SDK_INT 与 N/M/LOLLIPOP 低档位残留（应为 0，验证上游删除）"
++rg -n 'SDK_INT\s*[<>=]+\s*2[1-6]\b|VERSION_CODES\.(N\b|M\b|LOLLIPOP|LOLLIPOP_MR1|BASE)' \
++   --glob '*.{kt,java}' $MA/geckoview/src/main $MA/fenix/app/src/main \
++   $MA/android-components/components $MA/focus-android/app/src/main 2>/dev/null | head -30
++
++echo
++echo "## F. C++ 侧 __ANDROID_API__ 宏（mobile/android 内）"
++rg -n '__ANDROID_API__' $MA/geckoview $MA/android-components --glob '*.{cpp,h,c,mm}' 2>/dev/null | head -20
++
++echo
++echo "## G. coreLibraryDesugaring 现状（应为 0）"
++rg -rn 'coreLibraryDesugaring|desugar_jdk_libs|desugar-jdk-libs' \
++   gradle/libs.versions.toml $MA/fenix/app/build.gradle.kts \
++   $MA/android-components/components/lib/push-firebase 2>/dev/null || echo "(无任何 desugaring 配置 — 已确认移除)"
++} | tee "$OUT/phase1a_scan.txt"
++
++echo; echo "输出已保存: $OUT/phase1a_scan.txt"
+diff --git a/docs/android24-migration/scan1c_archive_ref.sh b/docs/android24-migration/scan1c_archive_ref.sh
+new file mode 100644
+index 000000000..df6ae5605
+--- /dev/null
++++ b/docs/android24-migration/scan1c_archive_ref.sh
+@@ -0,0 +1,55 @@
++#!/bin/bash
++# Phase 1c: 对照 archive-1.1 (c24727e, minSdk 21, Gecko 140.8) 的低版本分支分布
++# 用法: bash scan1c_archive_ref.sh
++REPO="${1:-/home/z/my-project/Waterfox-Android}"
++OUT="${2:-/home/z/my-project/download/waterfox-android24-migration}"
++cd "$REPO" || exit 1
++mkdir -p "$OUT"
++ARC=archive-1.1-snapshot
++
++{
++echo "============================================================"
++echo " Phase 1c: archive-1.1 (c24727e, Gecko 140.8, minSdk 21) 参照物扫描"
++echo " 时间: $(date -u +'%Y-%m-%d %H:%M UTC')"
++echo "============================================================"
++
++echo
++echo "## A. archive-1.1 geckoview/src/main 的 VERSION_CODES 档位分布"
++git grep -o 'VERSION_CODES\.[A-Z_0-9]*' $ARC -- mobile/android/geckoview/src/main/java 2>/dev/null \
++   | sed 's/.*VERSION_CODES\.//' | sort | uniq -c | sort -rn
++echo "--- A2. archive-1.1 geckoview/src/main/java 带版本判断的文件数 ---"
++git grep -l 'VERSION_CODES\|SDK_INT' $ARC -- mobile/android/geckoview/src/main/java 2>/dev/null | wc -l
++echo "--- A3. archive-1.1 geckoview/src/main/java 中 N/M/LOLLIPOP(含) 到 N 的分支明细 ---"
++git grep -n 'VERSION_CODES\.\(N\|M\|LOLLIPOP\|KITKAT\|JELLY\|BASE\)' $ARC -- mobile/android/geckoview/src/main/java 2>/dev/null | head -80
++
++echo
++echo "## B. 已被上游删除的关键类在 archive-1.1 中的位置"
++echo "--- B1. GeckoMediaDrmBridge* ---"
++git ls-tree -r --name-only $ARC -- mobile/android/geckoview/src/main/java | grep -i 'MediaDrm'
++echo "--- B2. AsyncCodec* ---"
++git ls-tree -r --name-only $ARC -- mobile/android/geckoview/src/main/java | grep -i 'AsyncCodec'
++echo "--- B3. main 中的现状 ---"
++ls mobile/android/geckoview/src/main/java/org/mozilla/gecko/media/ 2>/dev/null
++
++echo
++echo "## C. archive-1.1 的 coreLibraryDesugaring 配置（移植参照）"
++echo "--- C1. libs.versions.toml 中 desugar ---"
++git show $ARC:gradle/libs.versions.toml | grep -n -i 'desugar'
++echo "--- C2. fenix build.gradle.kts 中 desugar ---"
++git show $ARC:mobile/android/fenix/app/build.gradle.kts 2>/dev/null | grep -n -i -A2 -B2 'desugar' | head -30
++echo "--- C3. push-firebase 中 desugar ---"
++git show $ARC:mobile/android/android-components/components/lib/push-firebase/build.gradle.kts 2>/dev/null | grep -n -i -B2 -A2 'desugar' | head -30
++
++echo
++echo "## D. archive-1.1 中 App 层 (fenix+AC+focus src/main) 版本判断文件数"
++git grep -l 'VERSION_CODES\|SDK_INT' $ARC -- \
++  'mobile/android/fenix/app/src/main' \
++  'mobile/android/android-components/components' \
++  'mobile/android/focus-android/app/src/main' 2>/dev/null | wc -l
++
++echo
++echo "## E. archive-1.1 AndroidX 版本（minSdk 24 兼容参照档）"
++git show $ARC:gradle/libs.versions.toml | grep -E '^(activity|appcompat|core|lifecycle|compose-bom|navigation|kotlin|android-gradle-plugin|desugar_jdk_libs) *='
++} | tee "$OUT/phase1c_scan.txt"
++
++echo; echo "输出已保存: $OUT/phase1c_scan.txt"
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 4283ed88d..9b0e3912b 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -56,6 +56,7 @@ work = "2.12.0"
+ 
+ # Google other
+ accompanist = "0.37.3"
++desugar-jdk-libs = "2.1.5" # Restored for API 24 (Android 7) support; keep in sync with coreLibraryDesugaring users
+ firebase-messaging = "25.0.2"
+ ksp = "2.3.12"
+ material = "1.14.0"
+@@ -233,6 +234,7 @@ androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling
+ 
+ # Google other
+ accompanist-drawablepainter = { module = "com.google.accompanist:accompanist-drawablepainter", version.ref = "accompanist" }
++desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar-jdk-libs" }
+ firebase-messaging = { module = "com.google.firebase:firebase-messaging", version.ref = "firebase-messaging" }
+ google-material = { module = "com.google.android.material:material", version.ref = "material" }
+ ksp-symbol-processing-aa = { module = "com.google.devtools.ksp:symbol-processing-aa", version.ref = "ksp" }
+diff --git a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/DownloadNotification.kt b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/DownloadNotification.kt
+index 1cd7cdf67..c9f59ba2e 100644
+--- a/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/DownloadNotification.kt
++++ b/mobile/android/android-components/components/feature/downloads/src/main/java/mozilla/components/feature/downloads/DownloadNotification.kt
+@@ -10,6 +10,7 @@ import android.app.NotificationManager
+ import android.app.PendingIntent
+ import android.content.Context
+ import android.content.Intent
++import android.os.Build
+ import androidx.annotation.VisibleForTesting
+ import androidx.core.app.NotificationCompat
+ import androidx.core.app.NotificationManagerCompat.IMPORTANCE_NONE
+@@ -231,6 +232,11 @@ internal object DownloadNotification {
+         val notificationManager: NotificationManager = context.getSystemService()!!
+         if (!notificationManager.areNotificationsEnabled()) return false
+ 
++        // Notification channels are only available on API 26+ (Android O).
++        // Restored from 1.1.x for API 24 (Android 7) support: below O only
++        // app-level notifications can be checked (areNotificationsEnabled is API 24).
++        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
++
+         val channelId = ensureChannelExists(context)
+         val channel = notificationManager.getNotificationChannel(channelId)
+         if (channel.importance == IMPORTANCE_NONE) return false
+@@ -243,18 +249,22 @@ internal object DownloadNotification {
+      * Returns the channel id to be used for download notifications.
+      */
+     private fun ensureChannelExists(context: Context): String {
+-        val notificationManager: NotificationManager = context.getSystemService()!!
++        // NotificationChannel is only available on API 26+ (Android O).
++        // Restored from 1.1.x for API 24 (Android 7) support.
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            val notificationManager: NotificationManager = context.getSystemService()!!
+ 
+-        val channel =
+-            NotificationChannel(
+-                NOTIFICATION_CHANNEL_ID,
+-                context.applicationContext.getString(R.string.mozac_feature_downloads_notification_channel),
+-                NotificationManager.IMPORTANCE_LOW,
+-            )
++            val channel =
++                NotificationChannel(
++                    NOTIFICATION_CHANNEL_ID,
++                    context.applicationContext.getString(R.string.mozac_feature_downloads_notification_channel),
++                    NotificationManager.IMPORTANCE_LOW,
++                )
+ 
+-        notificationManager.createNotificationChannel(channel)
++            notificationManager.createNotificationChannel(channel)
+ 
+-        notificationManager.deleteNotificationChannel(LEGACY_NOTIFICATION_CHANNEL_ID)
++            notificationManager.deleteNotificationChannel(LEGACY_NOTIFICATION_CHANNEL_ID)
++        }
+ 
+         return NOTIFICATION_CHANNEL_ID
+     }
+diff --git a/mobile/android/android-components/components/feature/media/src/main/java/mozilla/components/feature/media/notification/MediaNotificationChannel.kt b/mobile/android/android-components/components/feature/media/src/main/java/mozilla/components/feature/media/notification/MediaNotificationChannel.kt
+index 8a84007b9..39b7a4afb 100644
+--- a/mobile/android/android-components/components/feature/media/src/main/java/mozilla/components/feature/media/notification/MediaNotificationChannel.kt
++++ b/mobile/android/android-components/components/feature/media/src/main/java/mozilla/components/feature/media/notification/MediaNotificationChannel.kt
+@@ -7,6 +7,7 @@ package mozilla.components.feature.media.notification
+ import android.app.NotificationChannel
+ import android.app.NotificationManager
+ import android.content.Context
++import android.os.Build
+ import androidx.core.app.NotificationCompat
+ import mozilla.components.feature.media.R
+ 
+@@ -20,22 +21,26 @@ internal object MediaNotificationChannel {
+      * Returns the channel id to be used for media notifications.
+      */
+     fun ensureChannelExists(context: Context): String {
+-        val notificationManager: NotificationManager =
+-            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+-
+-        val channel =
+-            NotificationChannel(
+-                NOTIFICATION_CHANNEL_ID,
+-                context.getString(R.string.mozac_feature_media_notification_channel),
+-                NotificationManager.IMPORTANCE_LOW,
+-            )
+-        channel.setShowBadge(false)
+-        channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+-
+-        notificationManager.createNotificationChannel(channel)
+-
+-        // We can't just change a channel. So we had to re-create the channel with a new name.
+-        notificationManager.deleteNotificationChannel(LEGACY_NOTIFICATION_CHANNEL_ID)
++        // NotificationChannel is only available on API 26+ (Android O).
++        // Restored from 1.1.x for API 24 (Android 7) support.
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            val notificationManager: NotificationManager =
++                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++
++            val channel =
++                NotificationChannel(
++                    NOTIFICATION_CHANNEL_ID,
++                    context.getString(R.string.mozac_feature_media_notification_channel),
++                    NotificationManager.IMPORTANCE_LOW,
++                )
++            channel.setShowBadge(false)
++            channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
++
++            notificationManager.createNotificationChannel(channel)
++
++            // We can't just change a channel. So we had to re-create the channel with a new name.
++            notificationManager.deleteNotificationChannel(LEGACY_NOTIFICATION_CHANNEL_ID)
++        }
+ 
+         return NOTIFICATION_CHANNEL_ID
+     }
+diff --git a/mobile/android/android-components/components/feature/pwa/src/main/java/mozilla/components/feature/pwa/feature/WebAppSiteControlsFeature.kt b/mobile/android/android-components/components/feature/pwa/src/main/java/mozilla/components/feature/pwa/feature/WebAppSiteControlsFeature.kt
+index 11f229dff..5d51fbe25 100644
+--- a/mobile/android/android-components/components/feature/pwa/src/main/java/mozilla/components/feature/pwa/feature/WebAppSiteControlsFeature.kt
++++ b/mobile/android/android-components/components/feature/pwa/src/main/java/mozilla/components/feature/pwa/feature/WebAppSiteControlsFeature.kt
+@@ -14,6 +14,7 @@ import android.content.Intent
+ import android.content.IntentFilter
+ import android.graphics.Bitmap
+ import android.graphics.drawable.Icon
++import android.os.Build
+ import androidx.annotation.VisibleForTesting
+ import androidx.core.app.NotificationCompat
+ import androidx.core.app.NotificationCompat.BADGE_ICON_NONE
+@@ -134,9 +135,16 @@ class WebAppSiteControlsFeature(
+     /** Build the notification with site controls to be displayed while the web app is active. */
+     private fun buildNotification(icon: Bitmap?): Notification {
+         val channelId = ensureChannelExists()
++        // The two-arg Notification.Builder and setBadgeIconType are only available
++        // on API 26+ (Android O). Restored from 1.1.x for API 24 (Android 7) support.
+         val builder =
+-            Notification.Builder(applicationContext, channelId).apply {
+-                setBadgeIconType(BADGE_ICON_NONE)
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++                Notification.Builder(applicationContext, channelId).apply {
++                    setBadgeIconType(BADGE_ICON_NONE)
++                }
++            } else {
++                @Suppress("DEPRECATION")
++                Notification.Builder(applicationContext)
+             }
+         if (icon != null) {
+             builder.setSmallIcon(Icon.createWithBitmap(icon))
+@@ -157,16 +165,20 @@ class WebAppSiteControlsFeature(
+      * Returns the channel id to be used for notifications.
+      */
+     private fun ensureChannelExists(): String {
+-        val notificationManager: NotificationManager = applicationContext.getSystemService()!!
+-
+-        val channel =
+-            NotificationChannel(
+-                NOTIFICATION_CHANNEL_ID,
+-                applicationContext.getString(R.string.mozac_feature_pwa_site_controls_notification_channel),
+-                NotificationManager.IMPORTANCE_MIN,
+-            )
+-
+-        notificationManager.createNotificationChannel(channel)
++        // NotificationChannel is only available on API 26+ (Android O).
++        // Restored from 1.1.x for API 24 (Android 7) support.
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            val notificationManager: NotificationManager = applicationContext.getSystemService()!!
++
++            val channel =
++                NotificationChannel(
++                    NOTIFICATION_CHANNEL_ID,
++                    applicationContext.getString(R.string.mozac_feature_pwa_site_controls_notification_channel),
++                    NotificationManager.IMPORTANCE_MIN,
++                )
++
++            notificationManager.createNotificationChannel(channel)
++        }
+ 
+         return NOTIFICATION_CHANNEL_ID
+     }
+diff --git a/mobile/android/android-components/components/feature/webnotifications/src/main/java/mozilla/components/feature/webnotifications/WebNotificationFeature.kt b/mobile/android/android-components/components/feature/webnotifications/src/main/java/mozilla/components/feature/webnotifications/WebNotificationFeature.kt
+index fc0a74993..bdde89ed7 100644
+--- a/mobile/android/android-components/components/feature/webnotifications/src/main/java/mozilla/components/feature/webnotifications/WebNotificationFeature.kt
++++ b/mobile/android/android-components/components/feature/webnotifications/src/main/java/mozilla/components/feature/webnotifications/WebNotificationFeature.kt
+@@ -8,6 +8,7 @@ import android.app.Activity
+ import android.app.NotificationChannel
+ import android.app.NotificationManager
+ import android.content.Context
++import android.os.Build
+ import androidx.annotation.DrawableRes
+ import androidx.core.app.NotificationCompat
+ import kotlin.coroutines.CoroutineContext
+@@ -120,15 +121,20 @@ class WebNotificationFeature(
+     }
+ 
+     private fun ensureNotificationGroupAndChannelExists() {
+-        val channel =
+-            NotificationChannel(
+-                NOTIFICATION_CHANNEL_ID,
+-                context.getString(R.string.mozac_feature_notification_channel_name),
+-                NotificationManager.IMPORTANCE_DEFAULT,
+-            )
+-        channel.setShowBadge(true)
+-        channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
++        // NotificationChannel is only available on API 26+ (Android O).
++        // Restored from 1.1.x for API 24 (Android 7) support; site notifications
++        // still work below O, they just cannot be grouped into a channel.
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            val channel =
++                NotificationChannel(
++                    NOTIFICATION_CHANNEL_ID,
++                    context.getString(R.string.mozac_feature_notification_channel_name),
++                    NotificationManager.IMPORTANCE_DEFAULT,
++                )
++            channel.setShowBadge(true)
++            channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
+ 
+-        notificationsDelegate.notificationManagerCompat.createNotificationChannel(channel)
++            notificationsDelegate.notificationManagerCompat.createNotificationChannel(channel)
++        }
+     }
+ }
+diff --git a/mobile/android/android-components/components/lib/crash/src/main/java/mozilla/components/lib/crash/notification/CrashNotification.kt b/mobile/android/android-components/components/lib/crash/src/main/java/mozilla/components/lib/crash/notification/CrashNotification.kt
+index 9ae9cb7ba..20b6720c9 100644
+--- a/mobile/android/android-components/components/lib/crash/src/main/java/mozilla/components/lib/crash/notification/CrashNotification.kt
++++ b/mobile/android/android-components/components/lib/crash/src/main/java/mozilla/components/lib/crash/notification/CrashNotification.kt
+@@ -108,17 +108,21 @@ internal class CrashNotification(
+         }
+ 
+         fun ensureChannelExists(context: Context): String {
+-            val notificationManager: NotificationManager =
+-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+-
+-            val channel =
+-                NotificationChannel(
+-                    NOTIFICATION_CHANNEL_ID,
+-                    context.getString(R.string.mozac_lib_crash_channel),
+-                    NotificationManager.IMPORTANCE_DEFAULT,
+-                )
+-
+-            notificationManager.createNotificationChannel(channel)
++            // NotificationChannel is only available on API 26+ (Android O).
++            // Restored from 1.1.x for API 24 (Android 7) support.
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++                val notificationManager: NotificationManager =
++                    context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++
++                val channel =
++                    NotificationChannel(
++                        NOTIFICATION_CHANNEL_ID,
++                        context.getString(R.string.mozac_lib_crash_channel),
++                        NotificationManager.IMPORTANCE_DEFAULT,
++                    )
++
++                notificationManager.createNotificationChannel(channel)
++            }
+ 
+             return NOTIFICATION_CHANNEL_ID
+         }
+diff --git a/mobile/android/android-components/components/lib/push-firebase/build.gradle b/mobile/android/android-components/components/lib/push-firebase/build.gradle
+index 3afe2415c..0428de038 100644
+--- a/mobile/android/android-components/components/lib/push-firebase/build.gradle
++++ b/mobile/android/android-components/components/lib/push-firebase/build.gradle
+@@ -9,9 +9,16 @@ plugins {
+ 
+ android {
+     namespace = 'mozilla.components.lib.push.firebase'
++
++    // Required for java.time APIs on Android 7 (API 24); restored from 1.1.x
++    // (removed upstream in Bug 1969392 when minSdk was 26).
++    compileOptions {
++        coreLibraryDesugaringEnabled = true
++    }
+ }
+ 
+ dependencies {
++    coreLibraryDesugaring libs.desugar.jdk.libs
+     api libs.firebase.messaging
+ 
+     implementation project(':components:concept-push')
+diff --git a/mobile/android/android-components/components/support/base/src/main/java/mozilla/components/support/base/ext/NotificationManagerCompat.kt b/mobile/android/android-components/components/support/base/src/main/java/mozilla/components/support/base/ext/NotificationManagerCompat.kt
+index 2177f394c..ed624e49c 100644
+--- a/mobile/android/android-components/components/support/base/src/main/java/mozilla/components/support/base/ext/NotificationManagerCompat.kt
++++ b/mobile/android/android-components/components/support/base/src/main/java/mozilla/components/support/base/ext/NotificationManagerCompat.kt
+@@ -4,6 +4,7 @@
+ 
+ package mozilla.components.support.base.ext
+ 
++import android.os.Build
+ import androidx.core.app.NotificationChannelCompat
+ import androidx.core.app.NotificationManagerCompat
+ 
+@@ -24,10 +25,18 @@ fun NotificationManagerCompat.areNotificationsEnabledSafe(): Boolean {
+  * If the channel does not exist or is null, this returns false. If the channel exists with importance more than
+  * [NotificationManagerCompat.IMPORTANCE_NONE] and notifications are enabled for the app, this returns true.
+  *
++ * On API < 26 (before Android O) notification channels do not exist; the app-level
++ * notification setting is the only gate. (Restored for API 24 / Android 7 support
++ * so callers do not silently treat notifications as disabled.)
++ *
+  * @param channelId the id of the notification channel to check.
+  * @return true if the channel is enabled, false otherwise.
+  */
+ fun NotificationManagerCompat.isNotificationChannelEnabled(channelId: String): Boolean {
++    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
++        return areNotificationsEnabledSafe()
++    }
++
+     val channel = getNotificationChannelSafe(channelId)
+     return if (channel == null) {
+         false
+diff --git a/mobile/android/android-components/components/support/ktx/src/main/java/mozilla/components/support/ktx/android/notification/Notification.kt b/mobile/android/android-components/components/support/ktx/src/main/java/mozilla/components/support/ktx/android/notification/Notification.kt
+index 60f71981d..6b960fcfb 100644
+--- a/mobile/android/android-components/components/support/ktx/src/main/java/mozilla/components/support/ktx/android/notification/Notification.kt
++++ b/mobile/android/android-components/components/support/ktx/src/main/java/mozilla/components/support/ktx/android/notification/Notification.kt
+@@ -9,6 +9,7 @@ package mozilla.components.support.ktx.android.notification
+ import android.app.NotificationChannel
+ import android.app.NotificationManager
+ import android.content.Context
++import android.os.Build
+ import androidx.annotation.StringRes
+ import androidx.core.content.getSystemService
+ 
+@@ -28,16 +29,21 @@ fun ensureNotificationChannelExists(
+     onSetupChannel: NotificationChannel.() -> Unit = {},
+     onCreateChannel: NotificationManager.() -> Unit = {},
+ ): String {
+-    val notificationManager = requireNotNull(context.getSystemService<NotificationManager>())
+-    val channel =
+-        NotificationChannel(
+-            channelDate.id,
+-            context.getString(channelDate.name),
+-            channelDate.importance,
+-        )
+-    onSetupChannel(channel)
+-    notificationManager.createNotificationChannel(channel)
+-    onCreateChannel(notificationManager)
++    // NotificationChannel is only available on API 26+ (Android O).
++    // Restored from 1.1.x for API 24 (Android 7) support; callers rely on
++    // NotificationCompat which safely ignores channel ids below API 26.
++    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++        val notificationManager = requireNotNull(context.getSystemService<NotificationManager>())
++        val channel =
++            NotificationChannel(
++                channelDate.id,
++                context.getString(channelDate.name),
++                channelDate.importance,
++            )
++        onSetupChannel(channel)
++        notificationManager.createNotificationChannel(channel)
++        onCreateChannel(notificationManager)
++    }
+ 
+     return channelDate.id
+ }
+diff --git a/mobile/android/android-components/components/support/ktx/src/main/java/mozilla/components/support/ktx/android/os/Vibrator.kt b/mobile/android/android-components/components/support/ktx/src/main/java/mozilla/components/support/ktx/android/os/Vibrator.kt
+index 7e1a37759..cb689a0ca 100644
+--- a/mobile/android/android-components/components/support/ktx/src/main/java/mozilla/components/support/ktx/android/os/Vibrator.kt
++++ b/mobile/android/android-components/components/support/ktx/src/main/java/mozilla/components/support/ktx/android/os/Vibrator.kt
+@@ -5,6 +5,8 @@
+ package mozilla.components.support.ktx.android.os
+ 
+ import android.Manifest.permission.VIBRATE
++import android.os.Build
++import android.os.Build.VERSION.SDK_INT
+ import android.os.VibrationEffect
+ import android.os.VibrationEffect.DEFAULT_AMPLITUDE
+ import android.os.Vibrator
+@@ -17,5 +19,12 @@ import androidx.annotation.RequiresPermission
+  */
+ @RequiresPermission(VIBRATE)
+ fun Vibrator.vibrateOneShot(milliseconds: Long) {
+-    vibrate(VibrationEffect.createOneShot(milliseconds, DEFAULT_AMPLITUDE))
++    // VibrationEffect is only available on API 26+ (Android O).
++    // Restored from 1.1.x for API 24 (Android 7) support.
++    if (SDK_INT >= Build.VERSION_CODES.O) {
++        vibrate(VibrationEffect.createOneShot(milliseconds, DEFAULT_AMPLITUDE))
++    } else {
++        @Suppress("Deprecation")
++        vibrate(milliseconds)
++    }
+ }
+diff --git a/mobile/android/fenix/app/build.gradle b/mobile/android/fenix/app/build.gradle
+index 1d2e16e14..9295626ec 100644
+--- a/mobile/android/fenix/app/build.gradle
++++ b/mobile/android/fenix/app/build.gradle
+@@ -347,6 +347,12 @@ android {
+         }
+     }
+ 
++    // Required for java.time and other java.* APIs on Android 7 (API 24).
++    // Restored from 1.1.x (removed upstream in Bug 1969392 when minSdk was 26).
++    compileOptions {
++        coreLibraryDesugaringEnabled = true
++    }
++
+     namespace = 'org.mozilla.fenix'
+ }
+ 
+@@ -537,6 +543,8 @@ tasks.register("updateAMOExtensionVersion", Copy) { task ->
+ }
+ 
+ dependencies {
++    // Restored from 1.1.x for API 24 support (see Bug 1969392 upstream removal).
++    coreLibraryDesugaring libs.desugar.jdk.libs
+     implementation project('longfox')
+     implementation project(':components:browser-engine-gecko')
+     implementation project(':components:compose-awesomebar')
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/NotificationManager.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/NotificationManager.kt
+index f3b931a66..d1d87e25b 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/NotificationManager.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/NotificationManager.kt
+@@ -11,6 +11,7 @@ import android.app.NotificationManager
+ import android.app.PendingIntent
+ import android.content.Context
+ import android.content.Intent
++import android.os.Build
+ import android.os.Bundle
+ import androidx.core.app.NotificationCompat
+ import androidx.core.app.NotificationManagerCompat
+@@ -48,15 +49,18 @@ class NotificationManager(
+     init {
+         // Create the notification channels we are going to use, but only on API 26+ because the NotificationChannel
+         // class is new and not in the support library.
+-        createNotificationChannel(
+-            RECEIVE_TABS_CHANNEL_ID,
+-            // Pick 'high' because this is a user-triggered action that is expected to be part of a continuity flow.
+-            // That is, user is expected to be waiting for this notification on their device; make it obvious.
+-            NotificationManager.IMPORTANCE_HIGH,
+-            // Name and description are shown in the 'app notifications' settings for the app.
+-            context.getString(R.string.fxa_received_tab_channel_name),
+-            context.getString(R.string.fxa_received_tab_channel_description),
+-        )
++        // (Guard restored from 1.1.x for API 24 / Android 7 support.)
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            createNotificationChannel(
++                RECEIVE_TABS_CHANNEL_ID,
++                // Pick 'high' because this is a user-triggered action that is expected to be part of a continuity flow.
++                // That is, user is expected to be waiting for this notification on their device; make it obvious.
++                NotificationManager.IMPORTANCE_HIGH,
++                // Name and description are shown in the 'app notifications' settings for the app.
++                context.getString(R.string.fxa_received_tab_channel_name),
++                context.getString(R.string.fxa_received_tab_channel_description),
++            )
++        }
+     }
+ 
+     private val logger = Logger("NotificationManager")
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/customtabs/PoweredByNotification.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/customtabs/PoweredByNotification.kt
+index 926831b18..46abb3e5e 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/customtabs/PoweredByNotification.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/customtabs/PoweredByNotification.kt
+@@ -8,6 +8,7 @@ import android.app.Notification
+ import android.app.NotificationChannel
+ import android.app.NotificationManager
+ import android.content.Context
++import android.os.Build
+ import androidx.core.app.NotificationCompat
+ import androidx.core.app.NotificationCompat.BADGE_ICON_NONE
+ import androidx.core.app.NotificationManagerCompat
+@@ -70,16 +71,20 @@ class PoweredByNotification(
+      * Returns the channel id to be used for notifications.
+      */
+     private fun ensureChannelExists(): String {
+-        val notificationManager: NotificationManager = applicationContext.getSystemService()!!
++        // NotificationChannel is only available on API 26+ (Android O).
++        // Guard restored from 1.1.x for API 24 (Android 7) support.
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            val notificationManager: NotificationManager = applicationContext.getSystemService()!!
+ 
+-        val channel =
+-            NotificationChannel(
+-                NOTIFICATION_CHANNEL_ID,
+-                applicationContext.getString(pwaR.string.mozac_feature_pwa_site_controls_notification_channel),
+-                NotificationManager.IMPORTANCE_MIN,
+-            )
++            val channel =
++                NotificationChannel(
++                    NOTIFICATION_CHANNEL_ID,
++                    applicationContext.getString(pwaR.string.mozac_feature_pwa_site_controls_notification_channel),
++                    NotificationManager.IMPORTANCE_MIN,
++                )
+ 
+-        notificationManager.createNotificationChannel(channel)
++            notificationManager.createNotificationChannel(channel)
++        }
+ 
+         return NOTIFICATION_CHANNEL_ID
+     }
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/onboarding/MarketingNotificationHelper.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/onboarding/MarketingNotificationHelper.kt
+index ca75c60a1..a1f089289 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/onboarding/MarketingNotificationHelper.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/onboarding/MarketingNotificationHelper.kt
+@@ -7,6 +7,7 @@ package org.mozilla.fenix.onboarding
+ import android.app.NotificationChannel
+ import android.app.NotificationManager
+ import android.content.Context
++import android.os.Build
+ import org.mozilla.fenix.R
+ 
+ // Channel ID was not updated when it was renamed to marketing.  Thus, we'll have to continue
+@@ -19,20 +20,24 @@ const val MARKETING_CHANNEL_ID = "org.mozilla.fenix.default.browser.channel"
+  * Returns the channel id to be used for notifications.
+  */
+ fun ensureMarketingChannelExists(context: Context): String {
+-    val notificationManager: NotificationManager =
+-        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++    // Notification channels are only available on API 26+ (Android O).
++    // Guard restored from 1.1.x for API 24 (Android 7) support.
++    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++        val notificationManager: NotificationManager =
++            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+ 
+-    var channel = notificationManager.getNotificationChannel(MARKETING_CHANNEL_ID)
++        var channel = notificationManager.getNotificationChannel(MARKETING_CHANNEL_ID)
+ 
+-    if (channel == null) {
+-        channel =
+-            NotificationChannel(
+-                MARKETING_CHANNEL_ID,
+-                context.getString(R.string.notification_marketing_channel_name),
+-                NotificationManager.IMPORTANCE_DEFAULT,
+-            )
++        if (channel == null) {
++            channel =
++                NotificationChannel(
++                    MARKETING_CHANNEL_ID,
++                    context.getString(R.string.notification_marketing_channel_name),
++                    NotificationManager.IMPORTANCE_DEFAULT,
++                )
+ 
+-        notificationManager.createNotificationChannel(channel)
++            notificationManager.createNotificationChannel(channel)
++        }
+     }
+     return MARKETING_CHANNEL_ID
+ }
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ProfilerService.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ProfilerService.kt
+index 795ee07b7..1ea4e0906 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ProfilerService.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/perf/ProfilerService.kt
+@@ -60,7 +60,11 @@ class ProfilerService : Service() {
+ 
+     override fun onCreate() {
+         super.onCreate()
+-        createNotificationChannel()
++        // Notification channels are only available on API 26+ (Android O).
++        // Guard restored from 1.1.x for API 24 (Android 7) support.
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            createNotificationChannel()
++        }
+         stateReceiver =
+             object : BroadcastReceiver() {
+                 override fun onReceive(context: Context?, intent: Intent?) {
+diff --git a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/privacyreport/PrivacyReportNotificationHelper.kt b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/privacyreport/PrivacyReportNotificationHelper.kt
+index 932c5b5dd..6a4a56a76 100644
+--- a/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/privacyreport/PrivacyReportNotificationHelper.kt
++++ b/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/privacyreport/PrivacyReportNotificationHelper.kt
+@@ -10,6 +10,7 @@ import android.app.NotificationManager
+ import android.app.PendingIntent
+ import android.content.Context
+ import android.content.Intent
++import android.os.Build
+ import androidx.core.app.NotificationManagerCompat
+ import androidx.core.net.toUri
+ import mozilla.components.support.base.android.NotificationsDelegate
+@@ -65,25 +66,29 @@ internal enum class PrivacyReportNotificationAvailability(val telemetryId: Strin
+  * @return the channel ID to be used for notifications.
+  */
+ fun ensurePrivacyReportNotificationChannelExists(context: Context): String {
+-    val notificationManager: NotificationManager =
+-        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+-
+-    val channel =
+-        notificationManager.getNotificationChannel(PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID)
+-            ?: NotificationChannel(
+-                    PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID,
+-                    context.getString(R.string.notification_privacy_report_channel_name),
+-                    NotificationManager.IMPORTANCE_DEFAULT,
+-                )
+-                .apply {
+-                    description =
+-                        context.getString(
+-                            R.string.notification_privacy_report_channel_description,
+-                            context.getString(R.string.app_name),
+-                        )
+-                }
+-
+-    notificationManager.createNotificationChannel(channel)
++    // Notification channels are only available on API 26+ (Android O).
++    // Guard restored from 1.1.x patterns for API 24 (Android 7) support.
++    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++        val notificationManager: NotificationManager =
++            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++
++        val channel =
++            notificationManager.getNotificationChannel(PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID)
++                ?: NotificationChannel(
++                        PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID,
++                        context.getString(R.string.notification_privacy_report_channel_name),
++                        NotificationManager.IMPORTANCE_DEFAULT,
++                    )
++                    .apply {
++                        description =
++                            context.getString(
++                                R.string.notification_privacy_report_channel_description,
++                                context.getString(R.string.app_name),
++                            )
++                    }
++
++        notificationManager.createNotificationChannel(channel)
++    }
+ 
+     return PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID
+ }
+@@ -97,6 +102,17 @@ fun ensurePrivacyReportNotificationChannelExists(context: Context): String {
+ internal fun privacyReportNotificationAvailability(
+     notificationManager: NotificationManagerCompat
+ ): PrivacyReportNotificationAvailability {
++    // Notification channels are only available on API 26+ (Android O).
++    // Below O there are no channels; app-level notification permission is the
++    // only gate (restored for API 24 / Android 7 support).
++    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
++        return if (notificationManager.areNotificationsEnabledSafe()) {
++            PrivacyReportNotificationAvailability.AVAILABLE
++        } else {
++            PrivacyReportNotificationAvailability.APP_NOTIFICATIONS_DISABLED
++        }
++    }
++
+     val channel = notificationManager.getNotificationChannelCompat(PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID)
+ 
+     return when {
+diff --git a/mobile/android/focus-android/app/src/main/java/org/mozilla/focus/session/SessionNotificationService.kt b/mobile/android/focus-android/app/src/main/java/org/mozilla/focus/session/SessionNotificationService.kt
+index 07d6fcb27..b4cc35f15 100644
+--- a/mobile/android/focus-android/app/src/main/java/org/mozilla/focus/session/SessionNotificationService.kt
++++ b/mobile/android/focus-android/app/src/main/java/org/mozilla/focus/session/SessionNotificationService.kt
+@@ -71,7 +71,11 @@ class SessionNotificationService : Service() {
+                     }
+ 
+                 if (areNotificationsEnabled) {
+-                    createNotificationChannel()
++                    // Notification channels are only available on API 26+ (Android O).
++                    // Guard restored from 1.1.x for API 24 (Android 7) support.
++                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++                        createNotificationChannel()
++                    }
+                     startForeground(NOTIFICATION_ID, buildNotification())
+                 } else {
+                     permissionHandler.get()?.invoke()
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/gecko/media/CodecProxy.java b/mobile/android/geckoview/src/main/java/org/mozilla/gecko/media/CodecProxy.java
+index a58a56f53..c468a7e6d 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/gecko/media/CodecProxy.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/gecko/media/CodecProxy.java
+@@ -8,6 +8,7 @@ import android.media.MediaCodec;
+ import android.media.MediaCodec.BufferInfo;
+ import android.media.MediaCodec.CryptoInfo;
+ import android.media.MediaFormat;
++import android.os.Build;
+ import android.os.DeadObjectException;
+ import android.os.RemoteException;
+ import android.util.Log;
+@@ -485,10 +486,18 @@ public final class CodecProxy {
+     return buffer;
+   }
+ 
++  @WrapForJNI
++  public static boolean supportsCBCS() {
++    // Android N/API-24 supports CBCS but there seems to be a bug.
++    // See https://github.com/google/ExoPlayer/issues/4022
++    // Restored from 1.1.x for API 24 (Android 7) support.
++    return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1;
++  }
++
+   @WrapForJNI
+   public static boolean setCryptoPatternIfNeeded(
+       final CryptoInfo info, final int blocksToEncrypt, final int blocksToSkip) {
+-    if (blocksToEncrypt > 0 || blocksToSkip > 0) {
++    if (supportsCBCS() && (blocksToEncrypt > 0 || blocksToSkip > 0)) {
+       info.setPattern(new CryptoInfo.Pattern(blocksToEncrypt, blocksToSkip));
+       return true;
+     }
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/gecko/util/WebAuthnUtils.java b/mobile/android/geckoview/src/main/java/org/mozilla/gecko/util/WebAuthnUtils.java
+index d48fe66c4..d82831dce 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/gecko/util/WebAuthnUtils.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/gecko/util/WebAuthnUtils.java
+@@ -4,6 +4,7 @@
+ 
+ package org.mozilla.gecko.util;
+ 
++import android.text.TextUtils;
+ import android.util.Base64;
+ import android.util.Log;
+ import androidx.annotation.NonNull;
+@@ -236,7 +237,8 @@ public class WebAuthnUtils {
+               Base64.encodeToString(
+                   this.attestationObject, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING))
+           .append(", transports=")
+-          .append(String.join(", ", this.transports));
++          // TextUtils.join instead of String.join (API 26+) for API 24 support.
++          .append((String) TextUtils.join(", ", this.transports));
+       if (this.authenticatorAttachment != null) {
+         sb.append(", authenticatorAttachment=").append(this.authenticatorAttachment);
+       }
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/CrashHandler.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/CrashHandler.java
+index b953fb883..6b8901a99 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/CrashHandler.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/CrashHandler.java
+@@ -393,7 +393,13 @@ public class CrashHandler implements Thread.UncaughtExceptionHandler {
+         if (remoteType != null) {
+           intent.putExtra(GeckoRuntime.EXTRA_CRASH_REMOTE_TYPE, remoteType);
+         }
+-        context.startForegroundService(intent);
++        // Context.startForegroundService() is only available on Android O (API 26)+.
++        // Restored from 1.1.x for API 24 (Android 7) support.
++        if (Build.VERSION.SDK_INT >= 26) {
++          context.startForegroundService(intent);
++        } else {
++          context.startService(intent);
++        }
+         return true;
+       }
+ 
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoEditable.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoEditable.java
+index d5b91d116..ec716da4c 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoEditable.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoEditable.java
+@@ -2107,7 +2107,9 @@ import org.mozilla.geckoview.SessionTextInput.EditableListener.IMEState;
+       outAttrs.imeOptions |= EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
+     }
+ 
+-    if (typeHint.length() == 0) {
++    // EditorInfo.contentMimeTypes is only available on Android N_MR1 (API 25)+.
++    // Restored from 1.1.x for API 24 (Android 7) support.
++    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1 && typeHint.length() == 0) {
+       // contenteditable allows image insertion.
+       outAttrs.contentMimeTypes = new String[] {"image/gif", "image/jpeg", "image/png"};
+     }
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoInputConnection.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoInputConnection.java
+index 59c4e24b7..a7ff0b079 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoInputConnection.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoInputConnection.java
+@@ -4,11 +4,13 @@
+ 
+ package org.mozilla.geckoview;
+ 
++import android.annotation.TargetApi;
+ import android.content.Context;
+ import android.content.res.Configuration;
+ import android.graphics.Matrix;
+ import android.graphics.RectF;
+ import android.media.AudioManager;
++import android.os.Build;
+ import android.os.Bundle;
+ import android.os.Handler;
+ import android.os.Looper;
+@@ -806,6 +808,9 @@ import org.mozilla.gecko.util.ThreadUtils;
+     am.dispatchMediaKeyEvent(event);
+   }
+ 
++  // InputContentInfo (API 25) is only referenced here; the system never calls
++  // this on API < 25. Annotation restored from 1.1.x for lint correctness.
++  @TargetApi(Build.VERSION_CODES.N_MR1)
+   @Override
+   public boolean commitContent(
+       final InputContentInfo inputContentInfo, final int flags, final Bundle opts) {
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java
+index c52b13bba..95a14bf33 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoRuntimeSettings.java
+@@ -2398,7 +2398,8 @@ public final class GeckoRuntimeSettings extends RuntimeSettings {
+    */
+   public @NonNull GeckoRuntimeSettings setTrustedRecursiveResolverExcludedDomains(
+       final @NonNull List<String> domains) {
+-    mTrustedRecursiveResolverExcludedDomains.commit(String.join(",", domains));
++    // TextUtils.join instead of String.join (API 26+) for API 24 support.
++    mTrustedRecursiveResolverExcludedDomains.commit((String) TextUtils.join(",", domains));
+     return this;
+   }
+ 
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoView.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoView.java
+index 33b9aee70..01b456fb9 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoView.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/GeckoView.java
+@@ -361,7 +361,14 @@ public class GeckoView extends FrameLayout implements GeckoDisplay.NewSurfacePro
+       mSelectionActionDelegate = new BasicSelectionActionDelegate(activity);
+     }
+ 
+-    mAutofillDelegate = new AndroidAutofillDelegate();
++    // Android autofill (android.view.autofill.*) is only available on Android O
++    // (API 26)+. Restored from 1.1.x for API 24 (Android 7) support.
++    if (Build.VERSION.SDK_INT >= 26) {
++      mAutofillDelegate = new AndroidAutofillDelegate();
++    } else {
++      // We don't support Autofill on SDK < 26
++      mAutofillDelegate = new Autofill.Delegate() {};
++    }
+     mPrintDelegate = new GeckoViewPrintDelegate();
+   }
+ 
+diff --git a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/SessionAccessibility.java b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/SessionAccessibility.java
+index ba757145b..6be878a72 100644
+--- a/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/SessionAccessibility.java
++++ b/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/SessionAccessibility.java
+@@ -807,7 +807,8 @@ public class SessionAccessibility {
+         }
+       }
+ 
+-      node.setContentDescription(addSpansToText(String.join(" ", contentDescription), language));
++      // TextUtils.join instead of String.join (API 26+) for API 24 support.
++      node.setContentDescription(addSpansToText((String) TextUtils.join(" ", contentDescription), language));
+ 
+       // Set live region
+       node.setLiveRegion(liveRegion);

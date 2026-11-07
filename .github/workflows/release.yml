@@ -1,0 +1,58 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. android24-v1.0)'
+        required: true
+        default: 'android24-v1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch release assets
+        run: |
+          BASE="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}"
+          mkdir -p assets
+          for f in android24-full-migration.patch FINAL_REPORT.md phase1_report.md phase3_androidx_minsdk.json; do
+            curl -fsSL -o "assets/$f" "$BASE/docs/android24-migration/$f"
+          done
+          ls -la assets
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          cat > notes.md <<'EOF'
+          # Waterfox Android 7 (API 24) 全量降级迁移（版本 B）
+
+          > ⚠️ **AI 生成声明**：本 release 的迁移代码、补丁与报告均由 AI（GLM，Z.ai）生成，
+          > 仅经静态验证（API 级别论证 + rg/git 复扫），未经编译与真机验证。
+
+          - 基线：BrowserWorks/Waterfox-Android `main` @ `427cd346`（Gecko 160）
+          - 改动：26 文件，+274/−125；`minSdk 26 → 24`（targetSdk 37 不变）；恢复 coreLibraryDesugaring（desugar-jdk-libs 2.1.5）
+          - 修复 19 处 API 26+ P0 崩溃点 + 1 处 DRM 功能错误（CodecProxy.supportsCBCS）+ 1 处静默禁用（营销通知）
+          - AndroidX 零降级（实测 89 个 AAR minSdkVersion 最大值恰为 24）
+
+          有 SDK 环境的验证命令：
+
+          ```
+          ./mach build-android && ./mach package-android
+          ./mach android-api-lint   # NewApi 检测
+          ```
+          EOF
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release 已存在，上传/覆盖资产"
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" assets/* --clobber
+          else
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+              --title "Waterfox Android 7 (API 24) migration ($TAG)" \
+              --notes-file notes.md \
+              assets/*
+          fi
