@@ -807,7 +807,8 @@ public class SessionAccessibility {
         }
       }
 
-      node.setContentDescription(addSpansToText(String.join(" ", contentDescription), language));
+      // TextUtils.join instead of String.join (API 26+) for API 24 support.
+      node.setContentDescription(addSpansToText((String) TextUtils.join(" ", contentDescription), language));
 
       // Set live region
       node.setLiveRegion(liveRegion);

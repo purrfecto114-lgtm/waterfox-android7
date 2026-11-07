@@ -4,6 +4,7 @@
 
 package org.mozilla.gecko.util;
 
+import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 import androidx.annotation.NonNull;
@@ -236,7 +237,8 @@ public class WebAuthnUtils {
               Base64.encodeToString(
                   this.attestationObject, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING))
           .append(", transports=")
-          .append(String.join(", ", this.transports));
+          // TextUtils.join instead of String.join (API 26+) for API 24 support.
+          .append((String) TextUtils.join(", ", this.transports));
       if (this.authenticatorAttachment != null) {
         sb.append(", authenticatorAttachment=").append(this.authenticatorAttachment);
       }

@@ -4,11 +4,13 @@
 
 package org.mozilla.geckoview;
 
+import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Matrix;
 import android.graphics.RectF;
 import android.media.AudioManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -806,6 +808,9 @@ import org.mozilla.gecko.util.ThreadUtils;
     am.dispatchMediaKeyEvent(event);
   }
 
+  // InputContentInfo (API 25) is only referenced here; the system never calls
+  // this on API < 25. Annotation restored from 1.1.x for lint correctness.
+  @TargetApi(Build.VERSION_CODES.N_MR1)
   @Override
   public boolean commitContent(
       final InputContentInfo inputContentInfo, final int flags, final Bundle opts) {

@@ -393,7 +393,13 @@ public class CrashHandler implements Thread.UncaughtExceptionHandler {
         if (remoteType != null) {
           intent.putExtra(GeckoRuntime.EXTRA_CRASH_REMOTE_TYPE, remoteType);
         }
-        context.startForegroundService(intent);
+        // Context.startForegroundService() is only available on Android O (API 26)+.
+        // Restored from 1.1.x for API 24 (Android 7) support.
+        if (Build.VERSION.SDK_INT >= 26) {
+          context.startForegroundService(intent);
+        } else {
+          context.startService(intent);
+        }
         return true;
       }
 

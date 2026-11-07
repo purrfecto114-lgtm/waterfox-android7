@@ -2398,7 +2398,8 @@ public final class GeckoRuntimeSettings extends RuntimeSettings {
    */
   public @NonNull GeckoRuntimeSettings setTrustedRecursiveResolverExcludedDomains(
       final @NonNull List<String> domains) {
-    mTrustedRecursiveResolverExcludedDomains.commit(String.join(",", domains));
+    // TextUtils.join instead of String.join (API 26+) for API 24 support.
+    mTrustedRecursiveResolverExcludedDomains.commit((String) TextUtils.join(",", domains));
     return this;
   }
 

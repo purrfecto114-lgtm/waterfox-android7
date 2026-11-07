@@ -2107,7 +2107,9 @@ import org.mozilla.geckoview.SessionTextInput.EditableListener.IMEState;
       outAttrs.imeOptions |= EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
     }
 
-    if (typeHint.length() == 0) {
+    // EditorInfo.contentMimeTypes is only available on Android N_MR1 (API 25)+.
+    // Restored from 1.1.x for API 24 (Android 7) support.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1 && typeHint.length() == 0) {
       // contenteditable allows image insertion.
       outAttrs.contentMimeTypes = new String[] {"image/gif", "image/jpeg", "image/png"};
     }

@@ -361,7 +361,14 @@ public class GeckoView extends FrameLayout implements GeckoDisplay.NewSurfacePro
       mSelectionActionDelegate = new BasicSelectionActionDelegate(activity);
     }
 
-    mAutofillDelegate = new AndroidAutofillDelegate();
+    // Android autofill (android.view.autofill.*) is only available on Android O
+    // (API 26)+. Restored from 1.1.x for API 24 (Android 7) support.
+    if (Build.VERSION.SDK_INT >= 26) {
+      mAutofillDelegate = new AndroidAutofillDelegate();
+    } else {
+      // We don't support Autofill on SDK < 26
+      mAutofillDelegate = new Autofill.Delegate() {};
+    }
     mPrintDelegate = new GeckoViewPrintDelegate();
   }
 
