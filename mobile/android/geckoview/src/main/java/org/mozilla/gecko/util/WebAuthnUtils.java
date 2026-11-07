@@ -238,7 +238,7 @@ public class WebAuthnUtils {
                   this.attestationObject, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING))
           .append(", transports=")
           // TextUtils.join instead of String.join (API 26+) for API 24 support.
-          .append((String) TextUtils.join(", ", this.transports));
+          .append(TextUtils.join(", ", this.transports));
       if (this.authenticatorAttachment != null) {
         sb.append(", authenticatorAttachment=").append(this.authenticatorAttachment);
       }
