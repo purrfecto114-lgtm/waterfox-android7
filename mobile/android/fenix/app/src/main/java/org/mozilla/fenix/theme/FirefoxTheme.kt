@@ -1,0 +1,228 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+package org.mozilla.fenix.theme
+
+import androidx.compose.material3.ColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.ui.platform.LocalContext
+import mozilla.components.compose.base.theme.AcornColors
+import mozilla.components.compose.base.theme.AcornGradientScheme
+import mozilla.components.compose.base.theme.AcornTheme
+import mozilla.components.compose.base.theme.AcornTypography
+import mozilla.components.compose.base.theme.Theme
+import mozilla.components.compose.base.theme.acornDarkColorScheme
+import mozilla.components.compose.base.theme.acornLightColorScheme
+import mozilla.components.compose.base.theme.acornOledColorScheme
+import mozilla.components.compose.base.theme.acornPrivateColorScheme
+import mozilla.components.compose.base.theme.darkAcornGradientScheme
+import mozilla.components.compose.base.theme.darkColorPalette
+import mozilla.components.compose.base.theme.layout.AcornLayout
+import mozilla.components.compose.base.theme.layout.AcornWindowSize
+import mozilla.components.compose.base.theme.lightAcornGradientScheme
+import mozilla.components.compose.base.theme.lightColorPalette
+import mozilla.components.compose.base.theme.oledAcornGradientScheme
+import mozilla.components.compose.base.theme.oledColorPalette
+import mozilla.components.compose.base.theme.privateAcornGradientScheme
+import mozilla.components.compose.base.theme.privateColorPalette
+import mozilla.components.compose.base.utils.ColorStop
+import mozilla.components.compose.base.utils.inComposePreview
+import mozilla.components.ui.colors.PhotonColors
+import org.mozilla.fenix.ext.components
+import org.mozilla.fenix.utils.Settings
+
+/**
+ * The theme for Mozilla Firefox for Android (Fenix).
+ *
+ * @param theme The current [Theme] that is displayed.
+ * @param content The children composables to be laid out.
+ */
+@Composable
+fun FirefoxTheme(
+    theme: Theme = getThemeProvider().provideTheme(),
+    content: @Composable () -> Unit,
+) {
+    val settings =
+        if (inComposePreview) {
+            null
+        } else {
+            LocalContext.current.components.settings
+        }
+
+    val isBlackTheme = theme == Theme.Dark && settings?.shouldUseBlackThemeFor(isDark = true) == true
+
+    val customPalette = customThemePalette(theme, settings, isBlackTheme)
+    val colors = firefoxColors(theme, customPalette)
+    val colorScheme = firefoxColorScheme(theme, customPalette, isBlackTheme)
+
+    val gradients = firefoxGradientScheme(theme, customPalette, isBlackTheme)
+
+    val tabGroupColors: TabGroupColorPalette =
+        when (theme) {
+            Theme.Light -> TabGroupColorPalette.lightPalette
+            Theme.Dark -> TabGroupColorPalette.darkPalette
+            Theme.Oled -> TabGroupColorPalette.oledPalette
+            Theme.Private -> TabGroupColorPalette.privatePalette
+        }
+
+    ProvideFirefoxTokens(tabGroupColors = tabGroupColors) {
+        AcornTheme(
+            colors = colors,
+            colorScheme = colorScheme,
+            gradients = gradients,
+            content = content,
+        )
+    }
+}
+
+private fun customThemePalette(
+    theme: Theme,
+    settings: Settings?,
+    isBlackTheme: Boolean,
+): ThemeColorPalette? {
+    val selectedThemeColor =
+        when (theme) {
+            Theme.Light -> settings?.resolveThemeColor(isDark = false)
+            Theme.Dark -> if (isBlackTheme) null else settings?.resolveThemeColor(isDark = true)
+            Theme.Oled,
+            Theme.Private -> null
+        }
+    return selectedThemeColor?.takeUnless { it == ThemeColor.Default }?.palette(isDark = theme == Theme.Dark)
+}
+
+private fun firefoxColors(theme: Theme, customPalette: ThemeColorPalette?): AcornColors {
+    val baseColors =
+        when (theme) {
+            Theme.Light -> lightColorPalette
+            Theme.Dark -> darkColorPalette
+            Theme.Oled -> oledColorPalette
+            Theme.Private -> privateColorPalette
+        }
+    return if (customPalette != null) {
+        baseColors.copy(
+            formDefault = customPalette.control,
+            surfaceDimVariant = customPalette.layer2,
+        )
+    } else {
+        baseColors
+    }
+}
+
+private fun firefoxColorScheme(
+    theme: Theme,
+    customPalette: ThemeColorPalette?,
+    isBlackTheme: Boolean,
+): ColorScheme {
+    val baseColorScheme =
+        when (theme) {
+            Theme.Light -> acornLightColorScheme()
+            Theme.Dark -> if (isBlackTheme) blackColorScheme else acornDarkColorScheme()
+            Theme.Oled -> acornOledColorScheme()
+            Theme.Private -> acornPrivateColorScheme()
+        }
+    return if (customPalette != null) {
+        val isDark = theme == Theme.Dark
+        baseColorScheme.copy(
+            primary = if (isDark) customPalette.textAccent else customPalette.action,
+            primaryContainer = customPalette.layer2,
+            inversePrimary = customPalette.action,
+            secondaryContainer = customPalette.layer3,
+            background = customPalette.layer1,
+            surface = customPalette.layer1,
+            surfaceDim = customPalette.layer1,
+            surfaceBright = customPalette.layer2,
+            surfaceContainerLowest = customPalette.layer1,
+            surfaceContainerLow = customPalette.layer2,
+            surfaceContainer = customPalette.layer2,
+            surfaceContainerHigh = customPalette.layer3,
+            surfaceContainerHighest = customPalette.layer3,
+            surfaceVariant = customPalette.layer2,
+            outline = customPalette.control,
+            outlineVariant = customPalette.layer3,
+        )
+    } else {
+        baseColorScheme
+    }
+}
+
+internal fun firefoxGradientScheme(
+    theme: Theme,
+    customPalette: ThemeColorPalette?,
+    isBlackTheme: Boolean,
+): AcornGradientScheme {
+    val base =
+        when (theme) {
+            Theme.Light -> lightAcornGradientScheme
+            Theme.Dark -> darkAcornGradientScheme
+            Theme.Oled -> oledAcornGradientScheme
+            Theme.Private -> privateAcornGradientScheme
+        }
+    val backgroundColor =
+        when {
+            theme == Theme.Oled || theme == Theme.Private -> null
+            theme == Theme.Dark && isBlackTheme -> PhotonColors.Black
+            else -> customPalette?.layer1
+        }
+
+    // Match the custom toolbar surface in both the tab strip and its status-bar overlay.
+    return when (backgroundColor) {
+        null -> base
+        else ->
+            base.copy(
+                accentSubtle =
+                    base.accentSubtle.copy(
+                        colorStops = base.accentSubtle.colorStops.map { ColorStop(it.position, backgroundColor) }
+                    )
+            )
+    }
+}
+
+@Composable
+private fun ProvideFirefoxTokens(
+    tabGroupColors: TabGroupColorPalette,
+    content: @Composable () -> Unit,
+) {
+    CompositionLocalProvider(
+        localTabGroupColors provides tabGroupColors,
+        content = content,
+    )
+}
+
+private val blackColorScheme =
+    acornDarkColorScheme()
+        .copy(
+            background = PhotonColors.Black,
+            surface = PhotonColors.Black,
+            surfaceDim = PhotonColors.Black,
+            surfaceBright = PhotonColors.DarkGrey80,
+            surfaceContainerLowest = PhotonColors.DarkGrey80,
+            surfaceContainerLow = PhotonColors.DarkGrey80,
+            surfaceContainer = PhotonColors.DarkGrey90,
+            surfaceContainerHigh = PhotonColors.DarkGrey80,
+            surfaceContainerHighest = PhotonColors.DarkGrey70,
+            surfaceVariant = PhotonColors.DarkGrey80,
+        )
+
+/** Provides access to the Firefox design system tokens. */
+object FirefoxTheme {
+    val colors: AcornColors
+        @Composable @ReadOnlyComposable get() = AcornTheme.colors
+
+    val typography: AcornTypography
+        get() = AcornTheme.typography
+
+    val layout: AcornLayout
+        @Composable @ReadOnlyComposable get() = AcornTheme.layout
+
+    val windowSize: AcornWindowSize
+        @Composable @ReadOnlyComposable get() = AcornTheme.windowSize
+
+    val gradients: AcornGradientScheme
+        @Composable @ReadOnlyComposable get() = AcornTheme.gradients
+
+    val tabGroupColors: TabGroupColorPalette
+        @Composable @ReadOnlyComposable get() = localTabGroupColors.current
+}
