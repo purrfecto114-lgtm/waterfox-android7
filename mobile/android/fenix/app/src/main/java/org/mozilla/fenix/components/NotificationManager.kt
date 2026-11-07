@@ -11,6 +11,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -48,15 +49,18 @@ class NotificationManager(
     init {
         // Create the notification channels we are going to use, but only on API 26+ because the NotificationChannel
         // class is new and not in the support library.
-        createNotificationChannel(
-            RECEIVE_TABS_CHANNEL_ID,
-            // Pick 'high' because this is a user-triggered action that is expected to be part of a continuity flow.
-            // That is, user is expected to be waiting for this notification on their device; make it obvious.
-            NotificationManager.IMPORTANCE_HIGH,
-            // Name and description are shown in the 'app notifications' settings for the app.
-            context.getString(R.string.fxa_received_tab_channel_name),
-            context.getString(R.string.fxa_received_tab_channel_description),
-        )
+        // (Guard restored from 1.1.x for API 24 / Android 7 support.)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            createNotificationChannel(
+                RECEIVE_TABS_CHANNEL_ID,
+                // Pick 'high' because this is a user-triggered action that is expected to be part of a continuity flow.
+                // That is, user is expected to be waiting for this notification on their device; make it obvious.
+                NotificationManager.IMPORTANCE_HIGH,
+                // Name and description are shown in the 'app notifications' settings for the app.
+                context.getString(R.string.fxa_received_tab_channel_name),
+                context.getString(R.string.fxa_received_tab_channel_description),
+            )
+        }
     }
 
     private val logger = Logger("NotificationManager")

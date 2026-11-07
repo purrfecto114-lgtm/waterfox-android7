@@ -60,7 +60,11 @@ class ProfilerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        // Notification channels are only available on API 26+ (Android O).
+        // Guard restored from 1.1.x for API 24 (Android 7) support.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            createNotificationChannel()
+        }
         stateReceiver =
             object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {

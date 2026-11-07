@@ -71,7 +71,11 @@ class SessionNotificationService : Service() {
                     }
 
                 if (areNotificationsEnabled) {
-                    createNotificationChannel()
+                    // Notification channels are only available on API 26+ (Android O).
+                    // Guard restored from 1.1.x for API 24 (Android 7) support.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        createNotificationChannel()
+                    }
                     startForeground(NOTIFICATION_ID, buildNotification())
                 } else {
                     permissionHandler.get()?.invoke()

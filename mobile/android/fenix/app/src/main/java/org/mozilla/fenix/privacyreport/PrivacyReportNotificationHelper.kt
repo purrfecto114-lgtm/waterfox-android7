@@ -10,6 +10,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.net.toUri
 import mozilla.components.support.base.android.NotificationsDelegate
@@ -65,25 +66,29 @@ internal enum class PrivacyReportNotificationAvailability(val telemetryId: Strin
  * @return the channel ID to be used for notifications.
  */
 fun ensurePrivacyReportNotificationChannelExists(context: Context): String {
-    val notificationManager: NotificationManager =
-        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    // Notification channels are only available on API 26+ (Android O).
+    // Guard restored from 1.1.x patterns for API 24 (Android 7) support.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val notificationManager: NotificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-    val channel =
-        notificationManager.getNotificationChannel(PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID)
-            ?: NotificationChannel(
-                    PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID,
-                    context.getString(R.string.notification_privacy_report_channel_name),
-                    NotificationManager.IMPORTANCE_DEFAULT,
-                )
-                .apply {
-                    description =
-                        context.getString(
-                            R.string.notification_privacy_report_channel_description,
-                            context.getString(R.string.app_name),
-                        )
-                }
+        val channel =
+            notificationManager.getNotificationChannel(PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID)
+                ?: NotificationChannel(
+                        PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID,
+                        context.getString(R.string.notification_privacy_report_channel_name),
+                        NotificationManager.IMPORTANCE_DEFAULT,
+                    )
+                    .apply {
+                        description =
+                            context.getString(
+                                R.string.notification_privacy_report_channel_description,
+                                context.getString(R.string.app_name),
+                            )
+                    }
 
-    notificationManager.createNotificationChannel(channel)
+        notificationManager.createNotificationChannel(channel)
+    }
 
     return PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID
 }
@@ -97,6 +102,17 @@ fun ensurePrivacyReportNotificationChannelExists(context: Context): String {
 internal fun privacyReportNotificationAvailability(
     notificationManager: NotificationManagerCompat
 ): PrivacyReportNotificationAvailability {
+    // Notification channels are only available on API 26+ (Android O).
+    // Below O there are no channels; app-level notification permission is the
+    // only gate (restored for API 24 / Android 7 support).
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        return if (notificationManager.areNotificationsEnabledSafe()) {
+            PrivacyReportNotificationAvailability.AVAILABLE
+        } else {
+            PrivacyReportNotificationAvailability.APP_NOTIFICATIONS_DISABLED
+        }
+    }
+
     val channel = notificationManager.getNotificationChannelCompat(PRIVACY_REPORT_NOTIFICATION_CHANNEL_ID)
 
     return when {
