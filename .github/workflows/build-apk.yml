@@ -293,8 +293,9 @@ jobs:
           echo "$SIGNING_KEY_STORE_BASE64" | base64 --decode > mobile/android/fenix/app/keystore.jks
           mkdir -p /tmp/keycheck
           cat > /tmp/keycheck/CheckKey.java <<'EOF'
-          import java.security.*;
           import java.io.*;
+          import java.security.*;
+          import java.security.cert.Certificate;
           public class CheckKey {
               public static void main(String[] a) throws Exception {
                   KeyStore ks = KeyStore.getInstance("PKCS12");
@@ -303,10 +304,12 @@ jobs:
                   } catch (IOException e) {
                       System.out.println("FAIL: wrong STORE password or unreadable file: " + e.getMessage());
                       System.exit(1);
+                      return;
                   }
                   if (!ks.isKeyEntry(a[2])) {
                       System.out.println("FAIL: alias not a key entry: " + a[2]);
                       System.exit(2);
+                      return;
                   }
                   try {
                       Key k = ks.getKey(a[2], a[3].toCharArray());
@@ -315,16 +318,28 @@ jobs:
                   } catch (GeneralSecurityException e) {
                       System.out.println("FAIL: wrong KEY password for alias " + a[2] + " (" + e.getMessage() + ")");
                       System.exit(3);
+                      return;
                   }
+                  Certificate c = ks.getCertificate(a[2]);
+                  if (c == null) {
+                      System.out.println("FAIL: no certificate for alias " + a[2]);
+                      System.exit(4);
+                      return;
+                  }
+                  byte[] d = MessageDigest.getInstance("SHA-1").digest(c.getEncoded());
+                  StringBuilder hex = new StringBuilder();
+                  for (byte b : d) hex.append(String.format("%02X", b));
+                  System.out.println("CERT_SHA1=" + hex);
               }
           }
           EOF
           javac -d /tmp/keycheck /tmp/keycheck/CheckKey.java
-          java -cp /tmp/keycheck CheckKey mobile/android/fenix/app/keystore.jks \
-            "$SIGNING_STORE_PASSWORD" "$SIGNING_KEY_ALIAS" "$SIGNING_KEY_PASSWORD"
-          CERT_SHA1=$(keytool -list -v -keystore mobile/android/fenix/app/keystore.jks \
-            -storepass "$SIGNING_STORE_PASSWORD" \
-            | grep -i 'SHA-1' | head -1 | awk -F': ' '{print $NF}' | tr -d ' :' | tr 'a-f' 'A-F')
+          OUT=$(java -cp /tmp/keycheck CheckKey mobile/android/fenix/app/keystore.jks \
+            "$SIGNING_STORE_PASSWORD" "$SIGNING_KEY_ALIAS" "$SIGNING_KEY_PASSWORD" 2>&1) || RC=$?
+          echo "$OUT"
+          [ "${RC:-0}" = "0" ] || { echo "::error::签名自检失败 (rc=$RC)"; exit "$RC"; }
+          CERT_SHA1=$(printf '%s\n' "$OUT" | sed -n 's/^CERT_SHA1=//p')
+          [ -n "$CERT_SHA1" ] || { echo "::error::CheckKey 未输出 CERT_SHA1"; exit 1; }
           echo "cert SHA1: $CERT_SHA1"
           [ "$CERT_SHA1" = "$EXPECTED_CERT_SHA1" ] || {
             echo "::error::证书指纹不匹配: $CERT_SHA1"; exit 1; }
