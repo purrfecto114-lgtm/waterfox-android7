@@ -88,6 +88,7 @@ jobs:
           rsync -a slim/mobile/ full/mobile/
           rsync -a slim/build/ full/build/
           rsync -a slim/gradle/ full/gradle/
+          rsync -a slim/patches/ full/patches/
           cp -f slim/README.md full/README.md
           cp -f slim/LICENSE full/LICENSE
           rsync -a slim/docs/ full/docs/
@@ -155,11 +156,22 @@ jobs:
           chmod +x scripts/fetch-clang-23.sh
           ./scripts/fetch-clang-23.sh
 
-      - name: Apply glean no-op patch (官方配方)
+      - name: Apply glean patches (官方 no-op 配方 + minSdk 24)
         working-directory: full
         run: |
           chmod +x patches/apply-local-patches.sh
           ./patches/apply-local-patches.sh
+          # 追加：glean includeBuild 自带 ext.build.minSdkVersion=26，与 APK minSdk 24 冲突
+          # （v1.0.1 修复：manifest merger 报 uses-sdk:minSdkVersion 24 cannot be smaller than 26）
+          if git -C glean apply --reverse --check patches/glean-minsdk-24.patch >/dev/null 2>&1; then
+            echo "glean minSdk 24 patch: already applied"
+          elif git -C glean apply --check patches/glean-minsdk-24.patch >/dev/null 2>&1; then
+            git -C glean apply patches/glean-minsdk-24.patch
+            echo "glean minSdk 24 patch: applied"
+          else
+            echo "::error::glean minSdk 24 patch 无法应用（submodule 版本漂移？需重做补丁）"
+            exit 1
+          fi
 
       - name: Write mozconfig (arm64, thin LTO 适配 16GB runner)
         working-directory: full

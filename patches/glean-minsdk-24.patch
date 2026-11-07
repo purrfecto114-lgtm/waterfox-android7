@@ -1,0 +1,13 @@
+diff --git a/build.gradle b/build.gradle
+--- a/build.gradle
++++ b/build.gradle
+@@ -10,7 +10,7 @@ buildscript {
+     ext.build = [
+         ndkVersion: "29.0.14206865", // Keep it in sync in TC Dockerfile.
+         compileSdkVersion: 36,
+         targetSdkVersion: 36,
+-        minSdkVersion: 26,
++        minSdkVersion: 24,
+         jvmTargetCompatibility: 17,
+     ]
+ 

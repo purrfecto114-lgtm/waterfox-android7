@@ -1575,3 +1575,7 @@ diff --git a/mobile/android/android-components/.config.yml b/mobile/android/andr
 (v1.0.1 fix: APK 级 minSdk 真正来源是本文件——shared-settings.gradle 的 Config 类直读；
  mozconfigure 的 min_sdk_version 只影响 GeckoView/mozinfo。v1.0 仅改 mozconfigure，
  APK 仍为 minSdk 26，Android 7 无法安装。详见 FINAL_REPORT.md 勘误。)
+
+(v1.0.1 fix #2: glean includeBuild 的根 build.gradle 自带 ext.build.minSdkVersion=26，
+ 与 APK minSdk 24 冲突。修复走 patches/glean-minsdk-24.patch（官方 no-op 配方后应用），
+ 不在树内 diff 中体现。见 FINAL_REPORT.md 勘误。)

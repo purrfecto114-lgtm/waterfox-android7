@@ -18,6 +18,11 @@
   **Fenix/AC 的 APK 级 minSdk 真正来源是 `mobile/android/android-components/.config.yml`**
   （shared-settings.gradle 的 Config 类直接读该文件），v1.0 因此打出 minSdk 26 的包。
   已修复：`.config.yml` minSdkVersion 26→24，CI 增加 overlay 断言 + 构建后 aapt `sdkVersion:'24'` 强校验。
+  **第二处联动（v1.0.1 构建 #13 现场暴露）**：glean 是 includeBuild 独立构建（`settings.gradle`
+  includeBuild `${topsrcdir}/glean` + 依赖替换），其根 `build.gradle` 自带 `ext.build.minSdkVersion=26`，
+  manifest merger 拒绝 `uses-sdk:minSdkVersion 24 < library 26`。已补 `patches/glean-minsdk-24.patch`
+  （在官方 no-op 配方后应用；no-op 补丁已将 Glean.initialize() 等核心逻辑掏空，运行时面基本惰性，
+  降级风险低——残余风险与整体迁移一致，仍需 Android 7 真机回归）。
 - **coreLibraryDesugaring 已恢复**【已验证配置存在；编译行为未验证】三处与 1.1.x 同构：
   - `gradle/libs.versions.toml`: `desugar-jdk-libs = "2.1.5"`（与 archive-1.1 相同版本；
     其 minCompileSdk 34 ≤ 当前 compileSdk 37，minSdk 21 ≤ 24，与 Kotlin/AGP 无耦合）
