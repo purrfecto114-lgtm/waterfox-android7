@@ -8,6 +8,7 @@ import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
 import androidx.annotation.DrawableRes
 import androidx.core.app.NotificationCompat
 import kotlin.coroutines.CoroutineContext
@@ -120,15 +121,20 @@ class WebNotificationFeature(
     }
 
     private fun ensureNotificationGroupAndChannelExists() {
-        val channel =
-            NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                context.getString(R.string.mozac_feature_notification_channel_name),
-                NotificationManager.IMPORTANCE_DEFAULT,
-            )
-        channel.setShowBadge(true)
-        channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
+        // NotificationChannel is only available on API 26+ (Android O).
+        // Restored from 1.1.x for API 24 (Android 7) support; site notifications
+        // still work below O, they just cannot be grouped into a channel.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel =
+                NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    context.getString(R.string.mozac_feature_notification_channel_name),
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                )
+            channel.setShowBadge(true)
+            channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
 
-        notificationsDelegate.notificationManagerCompat.createNotificationChannel(channel)
+            notificationsDelegate.notificationManagerCompat.createNotificationChannel(channel)
+        }
     }
 }

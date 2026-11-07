@@ -108,17 +108,21 @@ internal class CrashNotification(
         }
 
         fun ensureChannelExists(context: Context): String {
-            val notificationManager: NotificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            // NotificationChannel is only available on API 26+ (Android O).
+            // Restored from 1.1.x for API 24 (Android 7) support.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val notificationManager: NotificationManager =
+                    context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            val channel =
-                NotificationChannel(
-                    NOTIFICATION_CHANNEL_ID,
-                    context.getString(R.string.mozac_lib_crash_channel),
-                    NotificationManager.IMPORTANCE_DEFAULT,
-                )
+                val channel =
+                    NotificationChannel(
+                        NOTIFICATION_CHANNEL_ID,
+                        context.getString(R.string.mozac_lib_crash_channel),
+                        NotificationManager.IMPORTANCE_DEFAULT,
+                    )
 
-            notificationManager.createNotificationChannel(channel)
+                notificationManager.createNotificationChannel(channel)
+            }
 
             return NOTIFICATION_CHANNEL_ID
         }

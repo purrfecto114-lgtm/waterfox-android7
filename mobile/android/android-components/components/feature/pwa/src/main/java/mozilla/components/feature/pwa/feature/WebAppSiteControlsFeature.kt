@@ -14,6 +14,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.drawable.Icon
+import android.os.Build
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationCompat.BADGE_ICON_NONE
@@ -134,9 +135,16 @@ class WebAppSiteControlsFeature(
     /** Build the notification with site controls to be displayed while the web app is active. */
     private fun buildNotification(icon: Bitmap?): Notification {
         val channelId = ensureChannelExists()
+        // The two-arg Notification.Builder and setBadgeIconType are only available
+        // on API 26+ (Android O). Restored from 1.1.x for API 24 (Android 7) support.
         val builder =
-            Notification.Builder(applicationContext, channelId).apply {
-                setBadgeIconType(BADGE_ICON_NONE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(applicationContext, channelId).apply {
+                    setBadgeIconType(BADGE_ICON_NONE)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(applicationContext)
             }
         if (icon != null) {
             builder.setSmallIcon(Icon.createWithBitmap(icon))
@@ -157,16 +165,20 @@ class WebAppSiteControlsFeature(
      * Returns the channel id to be used for notifications.
      */
     private fun ensureChannelExists(): String {
-        val notificationManager: NotificationManager = applicationContext.getSystemService()!!
+        // NotificationChannel is only available on API 26+ (Android O).
+        // Restored from 1.1.x for API 24 (Android 7) support.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notificationManager: NotificationManager = applicationContext.getSystemService()!!
 
-        val channel =
-            NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                applicationContext.getString(R.string.mozac_feature_pwa_site_controls_notification_channel),
-                NotificationManager.IMPORTANCE_MIN,
-            )
+            val channel =
+                NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    applicationContext.getString(R.string.mozac_feature_pwa_site_controls_notification_channel),
+                    NotificationManager.IMPORTANCE_MIN,
+                )
 
-        notificationManager.createNotificationChannel(channel)
+            notificationManager.createNotificationChannel(channel)
+        }
 
         return NOTIFICATION_CHANNEL_ID
     }

@@ -10,6 +10,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat.IMPORTANCE_NONE
@@ -231,6 +232,11 @@ internal object DownloadNotification {
         val notificationManager: NotificationManager = context.getSystemService()!!
         if (!notificationManager.areNotificationsEnabled()) return false
 
+        // Notification channels are only available on API 26+ (Android O).
+        // Restored from 1.1.x for API 24 (Android 7) support: below O only
+        // app-level notifications can be checked (areNotificationsEnabled is API 24).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+
         val channelId = ensureChannelExists(context)
         val channel = notificationManager.getNotificationChannel(channelId)
         if (channel.importance == IMPORTANCE_NONE) return false
@@ -243,18 +249,22 @@ internal object DownloadNotification {
      * Returns the channel id to be used for download notifications.
      */
     private fun ensureChannelExists(context: Context): String {
-        val notificationManager: NotificationManager = context.getSystemService()!!
+        // NotificationChannel is only available on API 26+ (Android O).
+        // Restored from 1.1.x for API 24 (Android 7) support.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notificationManager: NotificationManager = context.getSystemService()!!
 
-        val channel =
-            NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                context.applicationContext.getString(R.string.mozac_feature_downloads_notification_channel),
-                NotificationManager.IMPORTANCE_LOW,
-            )
+            val channel =
+                NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    context.applicationContext.getString(R.string.mozac_feature_downloads_notification_channel),
+                    NotificationManager.IMPORTANCE_LOW,
+                )
 
-        notificationManager.createNotificationChannel(channel)
+            notificationManager.createNotificationChannel(channel)
 
-        notificationManager.deleteNotificationChannel(LEGACY_NOTIFICATION_CHANNEL_ID)
+            notificationManager.deleteNotificationChannel(LEGACY_NOTIFICATION_CHANNEL_ID)
+        }
 
         return NOTIFICATION_CHANNEL_ID
     }
