@@ -219,9 +219,11 @@ jobs:
           fi
           rm -rf /tmp/bs-in && mkdir -p /tmp/bs-in
           gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
+            -n waterfox-android24-buildstate-gradled -D /tmp/bs-in \
+            || gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
             -n waterfox-android24-buildstate -D /tmp/bs-in
           ls -la /tmp/bs-in
-          tar --zstd -xf /tmp/bs-in/buildstate.tar.zst -C full
+          tar --zstd -xf /tmp/bs-in/*.tar.zst -C full
           test -f full/obj-aarch64-linux-android/config.status || {
             echo "::error::buildstate 不完整（缺 config.status）"; exit 1; }
           cat full/obj-aarch64-linux-android/.buildstate.env >> "$GITHUB_ENV"
@@ -385,12 +387,30 @@ jobs:
           cp "$MAPDIR/mapping.txt" dist/
           jq '{versionName: .elements[0].versionName, versionCode: .elements[0].versionCode}' dist/output-metadata.json
 
+      - name: Save gradled buildstate（含 fenix gradle 产物，下次 gradle-only 快速复用）
+        working-directory: full
+        run: |
+          set -euo pipefail
+          tar --exclude='*.o' --exclude='*.a' --exclude='*.obj' --exclude='*.pyc' \
+            -I 'zstd -3 -T0' -cf "$GITHUB_WORKSPACE/buildstate-gradled.tar.zst" \
+            obj-aarch64-linux-android
+          du -sh "$GITHUB_WORKSPACE/buildstate-gradled.tar.zst"
+
+      - name: Upload gradled buildstate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: waterfox-android24-buildstate-gradled
+          path: buildstate-gradled.tar.zst
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: waterfox-android24-apk
           if-no-files-found: error
-          path: dist/*
+          path: full/dist/*
 
       - name: Upload build logs (failure)
         if: failure()
@@ -472,7 +492,7 @@ jobs:
 
           ## 安装
 
-          Android 7.0+ 设备直接侧载 waterfox-@VER@-arm64-v8a-release.apk。
+          Android 7.0+ 设备直接侧载附件中的 fenix-waterfox-arm64-v8a-release.apk（arm64-v8a，versionName @VER@）。
           EOF
           sed -i "s/@VER@/$VER/g; s/@CODE@/$CODE/g" notes.md
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
