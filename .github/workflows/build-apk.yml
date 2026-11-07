@@ -1,0 +1,343 @@
+name: build-apk
+
+# 构建 Waterfox Android 7 (minSdk 24) 迁移版 arm64 Release APK，
+# 成功后删除并重建 Release，附上 APK + 原有文档资产。
+# AI 生成：GLM / Z.ai
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'APK versionName（branchBuild.waterfox.version）'
+        required: true
+        default: '1.0.0'
+      tag:
+        description: 'Release tag（构建成功后删除并重建）'
+        required: true
+        default: 'android24-v1.0'
+      publish:
+        description: '构建成功后删除并重建 Release'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: false
+
+env:
+  BASELINE_REPO: BrowserWorks/waterfox-android
+  BASELINE_SHA: 427cd34663602950a8d8621a11c7aa273e7a3406
+  GRADLE_MAVEN_REPOSITORIES: https://maven.google.com/,https://repo.maven.apache.org/maven2/,https://plugins.gradle.org/m2/,https://maven.mozilla.org/maven2/
+  EXPECTED_CERT_SHA1: 28D8775C9ABEA900435A9D222C5A12240E5B2CCE
+
+jobs:
+  build:
+    name: Build signed arm64 APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout fork (精简树 + 迁移)
+        uses: actions/checkout@v4
+        with:
+          path: slim
+          fetch-depth: 1
+
+      - name: Checkout upstream baseline (全量 mozilla 树)
+        uses: actions/checkout@v4
+        with:
+          repository: BrowserWorks/waterfox-android
+          ref: 427cd34663602950a8d8621a11c7aa273e7a3406
+          path: full
+          fetch-depth: 1
+
+      - name: Init glean submodule (SSH->HTTPS 改写)
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git -C full submodule update --init --recursive
+
+      - name: Overlay 迁移改动到全量树
+        run: |
+          set -euo pipefail
+          rsync -a slim/mobile/ full/mobile/
+          rsync -a slim/build/ full/build/
+          rsync -a slim/gradle/ full/gradle/
+          cp -f slim/README.md full/README.md
+          cp -f slim/LICENSE full/LICENSE
+          rsync -a slim/docs/ full/docs/
+          rsync -a slim/.github/ full/.github/
+          # 一致性断言：迁移必须真实生效
+          grep -q 'min_sdk_version="24"' full/build/moz.configure/android-sdk.configure
+          grep -q 'coreLibraryDesugaringEnabled = true' full/mobile/android/fenix/app/build.gradle
+          grep -q 'coreLibraryDesugaring libs.desugar.jdk.libs' full/mobile/android/fenix/app/build.gradle
+          grep -q 'desugar-jdk-libs' full/gradle/libs.versions.toml
+          echo "overlay OK: $(ls full | wc -l) top-level entries"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Add 8G swap (thin-LTO 保险)
+        run: |
+          sudo fallocate -l 8G /swapfile || true
+          sudo chmod 600 /swapfile || true
+          sudo mkswap /swapfile >/dev/null 2>&1 || true
+          sudo swapon /swapfile || true
+          free -h
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup rust (rust-toolchain.toml)
+        run: |
+          source "$HOME/.cargo/env" || true
+          rustup toolchain install --no-self-update
+          rustup target add aarch64-linux-android
+          rustc --version
+
+      - name: Generate local.properties
+        run: |
+          NDK_VERSION=$(sed -n 's/^NDK_VERSION = "\(.*\)"/\1/p' python/mozboot/mozboot/android.py)
+          NDK_DIR="$HOME/.mozbuild/android-ndk-$NDK_VERSION"
+          cat > local.properties << EOF
+          localProperties.dependencySubstitutions.geckoviewTopobjdir=obj-aarch64-linux-android
+          sdk.dir=$HOME/.mozbuild/android-sdk-linux
+          ndk.dir=$NDK_DIR
+          branchBuild.waterfox.version=${{ inputs.version }}
+          EOF
+          cat > glean/local.properties << EOF
+          sdk.dir=$HOME/.mozbuild/android-sdk-linux
+          ndk.dir=$NDK_DIR
+          EOF
+          cat local.properties
+
+      - name: Fetch clang-23 toolchain
+        run: |
+          chmod +x scripts/fetch-clang-23.sh
+          ./scripts/fetch-clang-23.sh
+
+      - name: Apply glean no-op patch (官方配方)
+        run: |
+          chmod +x patches/apply-local-patches.sh
+          ./patches/apply-local-patches.sh
+
+      - name: Write mozconfig (arm64, thin LTO 适配 16GB runner)
+        run: |
+          cat > .mozconfig-android24 <<'MOZEOF'
+          ac_add_options --disable-debug
+          ac_add_options --disable-tests
+          ac_add_options --disable-android-emulator
+          ac_add_options --enable-android-subproject=fenix
+          ac_add_options --enable-application=mobile/android
+          clang23="$HOME/.mozbuild/clang-23"
+          wasi_sysroot="$HOME/.mozbuild/sysroot-wasm32-wasi"
+          if [ ! -x "$clang23/bin/clang" ] || [ ! -x "$clang23/bin/clang++" ]; then
+              echo "mozconfig: clang-23 missing, run scripts/fetch-clang-23.sh first" >&2
+              exit 1
+          fi
+          export PATH="$clang23/bin:$PATH"
+          export CC="$clang23/bin/clang"
+          export CXX="$clang23/bin/clang++"
+          export HOST_CC="$CC"
+          export HOST_CXX="$CXX"
+          export WASM_CC="$CC"
+          export WASM_CXX="$CXX"
+          export LLVM_PROFDATA="$clang23/bin/llvm-profdata"
+          ac_add_options --enable-bootstrap=-clang,-sysroot-wasm32-wasi
+          ac_add_options --with-wasi-sysroot="$wasi_sysroot"
+          ac_add_options --enable-geckoview-lite
+          ac_add_options --enable-appservices-in-tree
+          ac_add_options --enable-isolated-zygote-process
+          ac_add_options --enable-jxl
+          ac_add_options --without-onnx-runtime
+          ac_add_options --enable-lto=thin
+          ac_add_options --enable-optimize="-O3 -w"
+          ac_add_options --enable-release
+          ac_add_options --enable-rust-simd
+          ac_add_options --enable-update-channel=release
+          ac_add_options --target=aarch64-linux-android
+          mk_add_options AUTOCLOBBER=1
+          mk_add_options MOZ_OBJDIR=./obj-aarch64-linux-android
+          export MOZ_REQUIRE_SIGNING=
+          export MOZ_TELEMETRY_REPORTING=
+          export RUST_ANDROID_GRADLE_PYTHON_COMMAND=python3
+          MOZEOF
+          echo "MOZCONFIG=$PWD/.mozconfig-android24" >> "$GITHUB_ENV"
+
+      - name: mach configure（含 toolchain bootstrap，失败快速暴露）
+        run: |
+          set -o pipefail
+          unset ANDROID_HOME ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT ANDROID_SDK_ROOT
+          export MOZ_BUILD_DATE=$(date -u +%Y%m%d%H%M%S)
+          echo "MOZ_BUILD_DATE=$MOZ_BUILD_DATE" >> "$GITHUB_ENV"
+          ./mach configure 2>&1 | tee configure.log | tail -40
+          test -d "$HOME/.mozbuild/android-sdk-linux" && echo "SDK bootstrapped"
+          test -d "$HOME/.mozbuild"/android-ndk-* && echo "NDK bootstrapped"
+          df -h /
+
+      - name: mach build (Gecko, 3-5h)
+        run: |
+          set -o pipefail
+          unset ANDROID_HOME ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT ANDROID_SDK_ROOT
+          ./mach build 2>&1 | tee build.log | tail -25
+          df -h /
+
+      - name: Package gecko locales
+        run: |
+          set -o pipefail
+          unset ANDROID_HOME ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT ANDROID_SDK_ROOT
+          ./mach python scripts/package-gecko-locales.py --objdir obj-aarch64-linux-android
+          MOZ_CHROME_MULTILOCALE="$(./mach python scripts/package-gecko-locales.py --print-locales)"
+          echo "MOZ_CHROME_MULTILOCALE=$MOZ_CHROME_MULTILOCALE" >> "$GITHUB_ENV"
+
+      - name: Decode keystore (持久化签名)
+        run: |
+          echo "${{ secrets.SIGNING_KEY_STORE_BASE64 }}" | base64 --decode > mobile/android/fenix/app/keystore.jks
+          keytool -list -keystore mobile/android/fenix/app/keystore.jks -storepass "${{ secrets.SIGNING_STORE_PASSWORD }}" -alias waterfox-android24 >/dev/null && echo "keystore OK"
+
+      - name: Build release APKs
+        run: |
+          set -o pipefail
+          unset ANDROID_HOME ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT ANDROID_SDK_ROOT
+          export GRADLE_INVOKED_WITHIN_MACH_BUILD=1
+          ./mach gradle :fenix:assembleWaterfoxRelease 2>&1 | tee gradle.log | tail -30
+
+      - name: Verify signature + collect outputs
+        run: |
+          set -euo pipefail
+          APKDIR="obj-aarch64-linux-android/gradle/build/mobile/android/fenix/app/outputs/apk/waterfox/release"
+          MAPDIR="obj-aarch64-linux-android/gradle/build/mobile/android/fenix/app/outputs/mapping/waterfoxRelease"
+          find "$APKDIR" -maxdepth 1 -name '*.apk' -printf '%f %s bytes\n'
+          sig_sha1() {
+            local apk="$1" out="" APS
+            APS=$(ls -d "$HOME"/.mozbuild/android-sdk-linux/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
+            if [ -n "$APS" ]; then
+              out=$("$APS" verify --print-certs "$apk" | grep -i 'certificate SHA-1' | head -1 | sed 's/.*: //')
+            fi
+            if [ -z "$out" ]; then
+              out=$(keytool -printcert -jarfile "$apk" | sed -n 's/^.*SHA1: //p' | head -1)
+            fi
+            [ -n "$out" ] || { echo "::error::无法读取签名: $apk"; return 1; }
+            echo "$out" | tr -d ' :' | tr 'a-f' 'A-F'
+          }
+          for apk in "$APKDIR"/*.apk; do
+            SHA1=$(sig_sha1 "$apk")
+            echo "$apk -> $SHA1"
+            if [ "$SHA1" != "$EXPECTED_CERT_SHA1" ]; then
+              echo "::error::签名证书不匹配: $SHA1"; exit 1
+            fi
+          done
+          mkdir -p dist
+          cp "$APKDIR"/*.apk dist/
+          cp "$APKDIR/output-metadata.json" dist/
+          cp "$MAPDIR/mapping.txt" dist/
+          jq '{versionName: .elements[0].versionName, versionCode: .elements[0].versionCode}' dist/output-metadata.json
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: waterfox-android24-apk
+          if-no-files-found: error
+          path: dist/*
+
+      - name: Upload build logs (failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          if-no-files-found: ignore
+          path: |
+            configure.log
+            build.log
+            gradle.log
+            obj-aarch64-linux-android/config.log
+
+  release:
+    name: 删除并重建 Release（含 APK）
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fork（文档资产）
+        uses: actions/checkout@v4
+        with:
+          path: slim
+          fetch-depth: 1
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: waterfox-android24-apk
+          path: apk
+
+      - name: Delete old release + tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          echo "old release removed (if existed): $TAG"
+
+      - name: Create release with APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          VER=$(jq -r '.elements[0].versionName' apk/output-metadata.json)
+          CODE=$(jq -r '.elements[0].versionCode' apk/output-metadata.json)
+          test -f apk/mapping.txt
+          ls -la apk/
+          cat > notes.md <<'EOF'
+          # Waterfox Android 7 (API 24) 迁移 + Release APK（${{ inputs.tag }}）
+
+          > ⚠️ **AI 生成声明**：本 release 的迁移代码、补丁、报告与 APK 构建工作流均由 AI（GLM，Z.ai）生成。
+          > APK 已于 GitHub Actions 完成编译、签名与证书校验；尚未经真机验证。
+
+          ## 迁移摘要（版本 B：App 层与内核一起降级，基线保持上游 main）
+
+          - 基线：BrowserWorks/waterfox-android @ ${{ env.BASELINE_SHA }}（Gecko 160）
+          - 改动：26 文件，+274/−125；minSdk 26 → 24（targetSdk 37 不变）；恢复 coreLibraryDesugaring（desugar-jdk-libs 2.1.5）
+          - 修复 19 处 API 26+ P0 崩溃点 + 1 处 DRM 功能错误（CodecProxy.supportsCBCS）+ 1 处静默禁用（营销通知）
+          - AndroidX 零降级（实测 89 个 AAR minSdkVersion 最大值恰为 24）
+
+          ## APK 信息
+
+          - versionName：@VER@（versionCode @CODE@）
+          - ABI：arm64-v8a（universal 包同源生成，内容一致）
+          - minSdk：24（Android 7.0+）
+          - 签名：持久化 keystore（别名 waterfox-android24）
+            - SHA1：28:D8:77:5C:9A:BE:A9:00:43:5A:9D:22:2C:5A:12:24:0E:5B:2C:CE
+            - SHA256：8E:39:11:D8:D1:81:F7:E9:28:C7:8C:B6:01:CD:D6:D7:CE:DC:6C:2F:3B:B9:51:A9:7D:FE:10:0C:DB:7D:FC:54
+          - 后续版本沿用同一签名（仓库 Actions Secrets + 本地密钥备份），可直接覆盖安装升级
+
+          ## 构建说明
+
+          - 工作流：.github/workflows/build-apk.yml（本仓库精简迁移树 + 上游基线 ${{ env.BASELINE_SHA }} 全量树在 CI 现场合成后构建）
+          - 构建配方：上游官方 .mozconfig-aarch64-linux-android + scripts/fetch-clang-23.sh；唯一偏差 --enable-lto=thin（适配 16GB 公共 runner）
+          - 构建环境：GitHub Actions ubuntu-latest（4 vCPU / 16GB RAM）
+
+          ## 安装
+
+          Android 7.0+ 设备直接侧载 waterfox-@VER@-arm64-v8a-release.apk。
+          EOF
+          sed -i "s/@VER@/$VER/g; s/@CODE@/$CODE/g" notes.md
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Waterfox Android 7 (API 24) migration + APK ($TAG)" \
+            --notes-file notes.md \
+            apk/*.apk apk/mapping.txt \
+            slim/docs/android24-migration/android24-full-migration.patch \
+            slim/docs/android24-migration/FINAL_REPORT.md \
+            slim/docs/android24-migration/phase1_report.md \
+            slim/docs/android24-migration/phase3_androidx_minsdk.json
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | .name + " " + (.size|tostring)'
