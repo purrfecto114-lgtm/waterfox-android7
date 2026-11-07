@@ -97,10 +97,12 @@ jobs:
           java-version: 17
 
       - name: Setup rust (rust-toolchain.toml)
+        working-directory: full
         run: |
           source "$HOME/.cargo/env" || true
           rustup toolchain install --no-self-update
           rustup target add aarch64-linux-android
+          rustup target list --installed | grep aarch64-linux-android
           rustc --version
 
       - name: Generate local.properties
