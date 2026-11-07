@@ -37,7 +37,7 @@ env:
 jobs:
   build:
     name: Build signed arm64 APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 350
     steps:
       - name: Checkout fork (精简树 + 迁移)
@@ -82,8 +82,10 @@ jobs:
           sudo docker image prune -af >/dev/null 2>&1 || true
           df -h /
 
-      - name: Add 8G swap (thin-LTO 保险)
+      - name: Add 8G swap + 关闭 systemd-oomd（防 runner 服务被杀）
         run: |
+          sudo systemctl stop systemd-oomd 2>/dev/null || true
+          sudo systemctl mask systemd-oomd 2>/dev/null || true
           sudo fallocate -l 8G /swapfile || true
           sudo chmod 600 /swapfile || true
           sudo mkswap /swapfile >/dev/null 2>&1 || true
@@ -172,6 +174,7 @@ jobs:
           ac_add_options --target=aarch64-linux-android
           mk_add_options AUTOCLOBBER=1
           mk_add_options MOZ_OBJDIR=./obj-aarch64-linux-android
+          mk_add_options MOZ_MAKE_FLAGS=-j3
           export MOZ_REQUIRE_SIGNING=
           export MOZ_TELEMETRY_REPORTING=
           export RUST_ANDROID_GRADLE_PYTHON_COMMAND=python3
@@ -195,7 +198,7 @@ jobs:
         run: |
           set -o pipefail
           unset ANDROID_HOME ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT ANDROID_SDK_ROOT
-          ./mach build 2>&1 | tee build.log | tail -25
+          ./mach build 2>&1 | tee build.log
           df -h /
 
       - name: Package gecko locales
@@ -219,7 +222,7 @@ jobs:
           set -o pipefail
           unset ANDROID_HOME ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT ANDROID_SDK_ROOT
           export GRADLE_INVOKED_WITHIN_MACH_BUILD=1
-          ./mach gradle :fenix:assembleWaterfoxRelease 2>&1 | tee gradle.log | tail -30
+          ./mach gradle :fenix:assembleWaterfoxRelease 2>&1 | tee gradle.log
 
       - name: Verify signature + collect outputs
         working-directory: full
@@ -276,7 +279,7 @@ jobs:
     name: 删除并重建 Release（含 APK）
     needs: build
     if: ${{ inputs.publish }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout fork（文档资产）
@@ -336,7 +339,7 @@ jobs:
 
           - 工作流：.github/workflows/build-apk.yml（本仓库精简迁移树 + 上游基线 ${{ env.BASELINE_SHA }} 全量树在 CI 现场合成后构建）
           - 构建配方：上游官方 .mozconfig-aarch64-linux-android + scripts/fetch-clang-23.sh；唯一偏差 --enable-lto=thin（适配 16GB 公共 runner）
-          - 构建环境：GitHub Actions ubuntu-latest（4 vCPU / 16GB RAM）
+          - 构建环境：GitHub Actions ubuntu-24.04（4 vCPU / 16GB RAM）
 
           ## 安装
 
