@@ -297,10 +297,12 @@ jobs:
           import java.io.*;
           public class CheckKey {
               public static void main(String[] a) throws Exception {
-                  File f = new File(a[0]);
-                  KeyStore ks;
-                  try (FileInputStream in = new FileInputStream(f)) {
-                      ks = KeyStore.getInstance(in, a[1].toCharArray());
+                  KeyStore ks = KeyStore.getInstance("PKCS12");
+                  try (InputStream in = new FileInputStream(a[0])) {
+                      ks.load(in, a[1].toCharArray());
+                  } catch (IOException e) {
+                      System.out.println("FAIL: wrong STORE password or unreadable file: " + e.getMessage());
+                      System.exit(1);
                   }
                   if (!ks.isKeyEntry(a[2])) {
                       System.out.println("FAIL: alias not a key entry: " + a[2]);
@@ -308,10 +310,10 @@ jobs:
                   }
                   try {
                       Key k = ks.getKey(a[2], a[3].toCharArray());
-                      if (!(k instanceof PrivateKey)) throw new UnrecoverableKeyException("not private key");
+                      if (!(k instanceof PrivateKey)) throw new UnrecoverableKeyException("not a private key");
                       System.out.println("OK: store+key password verified (algo=" + k.getAlgorithm() + ")");
-                  } catch (UnrecoverableKeyException | java.security.spec.InvalidKeySpecException e) {
-                      System.out.println("FAIL: wrong KEY password for alias " + a[2]);
+                  } catch (GeneralSecurityException e) {
+                      System.out.println("FAIL: wrong KEY password for alias " + a[2] + " (" + e.getMessage() + ")");
                       System.exit(3);
                   }
               }
