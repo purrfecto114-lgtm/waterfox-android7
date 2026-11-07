@@ -82,11 +82,11 @@ jobs:
           sudo docker image prune -af >/dev/null 2>&1 || true
           df -h /
 
-      - name: Add 8G swap + 关闭 systemd-oomd（防 runner 服务被杀）
+      - name: Add 16G swap + 关闭 systemd-oomd（防 runner 服务被杀）
         run: |
           sudo systemctl stop systemd-oomd 2>/dev/null || true
           sudo systemctl mask systemd-oomd 2>/dev/null || true
-          sudo fallocate -l 8G /swapfile || true
+          sudo fallocate -l 16G /swapfile || true
           sudo chmod 600 /swapfile || true
           sudo mkswap /swapfile >/dev/null 2>&1 || true
           sudo swapon /swapfile || true
@@ -169,6 +169,7 @@ jobs:
           ac_add_options --enable-lto=thin
           ac_add_options --enable-optimize="-O3 -w"
           ac_add_options --enable-release
+          ac_add_options --disable-debug-symbols
           ac_add_options --enable-rust-simd
           ac_add_options --enable-update-channel=release
           ac_add_options --target=aarch64-linux-android
@@ -338,7 +339,7 @@ jobs:
           ## 构建说明
 
           - 工作流：.github/workflows/build-apk.yml（本仓库精简迁移树 + 上游基线 ${{ env.BASELINE_SHA }} 全量树在 CI 现场合成后构建）
-          - 构建配方：上游官方 .mozconfig-aarch64-linux-android + scripts/fetch-clang-23.sh；唯一偏差 --enable-lto=thin（适配 16GB 公共 runner）
+          - 构建配方：上游官方 .mozconfig-aarch64-linux-android + scripts/fetch-clang-23.sh；偏差两处：--enable-lto=thin、--disable-debug-symbols（适配 16GB 公共 runner，避免编译期内存压力）
           - 构建环境：GitHub Actions ubuntu-24.04（4 vCPU / 16GB RAM）
 
           ## 安装
