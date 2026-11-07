@@ -1,0 +1,127 @@
+{
+  "default": {
+    "searchDefault": "DuckDuckGo",
+    "searchOrder": [
+      "Bing",
+      "DuckDuckGo",
+      "Ecosia",
+      "Google",
+      "Mojeek",
+      "Qwant",
+      "Waterfox Private Search"
+    ],
+    "visibleDefaultEngines": [
+      "bing",
+      "ddg",
+      "ecosia",
+      "google",
+      "mojeek",
+      "qwant",
+      "wps"
+    ]
+  },
+  "AR": {
+    "searchDefault": "Qwant"
+  },
+  "AT": {
+    "searchDefault": "Qwant"
+  },
+  "AU": {
+    "searchDefault": "Qwant"
+  },
+  "BE": {
+    "searchDefault": "Qwant"
+  },
+  "BG": {
+    "searchDefault": "Qwant"
+  },
+  "CA": {
+    "searchDefault": "Qwant"
+  },
+  "CH": {
+    "searchDefault": "Qwant"
+  },
+  "CL": {
+    "searchDefault": "Qwant"
+  },
+  "CN": {
+    "searchDefault": "Qwant"
+  },
+  "CZ": {
+    "searchDefault": "Qwant"
+  },
+  "DE": {
+    "searchDefault": "Qwant"
+  },
+  "DK": {
+    "searchDefault": "Qwant"
+  },
+  "EE": {
+    "searchDefault": "Qwant"
+  },
+  "ES": {
+    "searchDefault": "Qwant"
+  },
+  "FI": {
+    "searchDefault": "Qwant"
+  },
+  "FR": {
+    "searchDefault": "Qwant"
+  },
+  "GB": {
+    "searchDefault": "Qwant"
+  },
+  "GR": {
+    "searchDefault": "Qwant"
+  },
+  "HU": {
+    "searchDefault": "Qwant"
+  },
+  "IE": {
+    "searchDefault": "Qwant"
+  },
+  "IL": {
+    "searchDefault": "Qwant"
+  },
+  "IT": {
+    "searchDefault": "Qwant"
+  },
+  "KR": {
+    "searchDefault": "Qwant"
+  },
+  "MX": {
+    "searchDefault": "Qwant"
+  },
+  "MY": {
+    "searchDefault": "Qwant"
+  },
+  "NL": {
+    "searchDefault": "Qwant"
+  },
+  "NO": {
+    "searchDefault": "Qwant"
+  },
+  "NZ": {
+    "searchDefault": "Qwant"
+  },
+  "PL": {
+    "searchDefault": "Qwant"
+  },
+  "PT": {
+    "searchDefault": "Qwant"
+  },
+  "RO": {
+    "searchDefault": "Qwant"
+  },
+  "SE": {
+    "searchDefault": "Qwant"
+  },
+  "TH": {
+    "searchDefault": "Qwant"
+  },
+  "US": {
+    "searchDefault": "Qwant"
+  },
+  "regionOverrides": {},
+  "locales": {}
+}
