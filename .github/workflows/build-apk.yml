@@ -33,6 +33,11 @@ env:
   BASELINE_SHA: 427cd34663602950a8d8621a11c7aa273e7a3406
   GRADLE_MAVEN_REPOSITORIES: https://maven.google.com/,https://repo.maven.apache.org/maven2/,https://plugins.gradle.org/m2/,https://maven.mozilla.org/maven2/
   EXPECTED_CERT_SHA1: 28D8775C9ABEA900435A9D222C5A12240E5B2CCE
+  # 签名四件套需对 gradle 进程可见（fenix signingConfigs 读取）
+  SIGNING_KEY_STORE_BASE64: ${{ secrets.SIGNING_KEY_STORE_BASE64 }}
+  SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+  SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+  SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
 
 jobs:
   build:
