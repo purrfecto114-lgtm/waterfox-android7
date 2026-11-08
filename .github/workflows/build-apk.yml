@@ -89,6 +89,14 @@ jobs:
           rsync -a slim/build/ full/build/
           rsync -a slim/gradle/ full/gradle/
           rsync -a slim/patches/ full/patches/
+          # 应用删除清单：rsync 不删文件，精简树里 git mv/删除的路径必须在此登记，
+          # 否则上游基线的旧副本残留（#16 事故：adaptive-icon 新旧并存照样炸链接）
+          if [ -f slim/.overlay-deletions ]; then
+            while IFS= read -r rel; do
+              case "$rel" in ''|\#*) continue;; esac
+              rm -rf "full/$rel" && echo "overlay-deletion: $rel"
+            done < slim/.overlay-deletions
+          fi
           cp -f slim/README.md full/README.md
           cp -f slim/LICENSE full/LICENSE
           rsync -a slim/docs/ full/docs/

@@ -1,0 +1,7 @@
+# overlay 后需要从 full/ 删除的路径（相对树根，一行一个；rsync 不删文件，
+# 精简树里 git mv / 删除的文件必须在此登记，否则上游旧副本残留导致构建失败）
+# 2026-11-08: adaptive-icon 移入 -v26 目录（v1.0.1 minSdk 24 修复）
+mobile/android/fenix/app/src/main/res/mipmap-anydpi
+mobile/android/fenix/app/src/waterfoxRelease/res/mipmap-anydpi
+mobile/android/fenix/app/src/debug/res/mipmap-anydpi
+mobile/android/fenix/app/src/waterfoxDebug/res/mipmap-anydpi
