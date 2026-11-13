@@ -21,8 +21,9 @@ on:
         options:
           - full
           - gradle-only
+          - snapshot
       buildstate_run_id:
-        description: 'gradle-only 模式：buildstate 所在 run id（必填，来自上一次 full run）'
+        description: 'gradle-only：buildstate run id（留空则自动用 buildstate 分支最近快照）；snapshot：要快照的 run id（必填）'
         required: false
         default: ''
       version:
@@ -60,6 +61,7 @@ env:
 jobs:
   build:
     name: Build signed arm64 APK
+    if: ${{ inputs.stage != 'snapshot' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     steps:
@@ -237,15 +239,20 @@ jobs:
         run: |
           set -euo pipefail
           RUN_ID="${{ inputs.buildstate_run_id }}"
-          if [ -z "$RUN_ID" ]; then
-            echo "::error::gradle-only 模式必须提供 buildstate_run_id（先跑一次 stage=full 让它保存 buildstate）"
-            exit 1
-          fi
           rm -rf /tmp/bs-in && mkdir -p /tmp/bs-in
-          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
-            -n waterfox-android24-buildstate-gradled -D /tmp/bs-in \
-            || gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
-            -n waterfox-android24-buildstate -D /tmp/bs-in
+          if [ -z "$RUN_ID" ]; then
+            # 未提供 run id → 从 buildstate 分支恢复最近一次快照（长期保存，不随 artifact 14 天过期失效）
+            echo "buildstate_run_id 未提供，从 buildstate 分支恢复最近快照"
+            rm -rf /tmp/bs-branch
+            git clone --depth 1 --single-branch --branch buildstate \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" /tmp/bs-branch
+            cat /tmp/bs-branch/parts/* > /tmp/bs-in/buildstate-gradled.tar.zst
+          else
+            gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
+              -n waterfox-android24-buildstate-gradled -D /tmp/bs-in \
+              || gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
+              -n waterfox-android24-buildstate -D /tmp/bs-in
+          fi
           ls -la /tmp/bs-in
           tar --zstd -xf /tmp/bs-in/*.tar.zst -C full
           test -f full/obj-aarch64-linux-android/config.status || {
@@ -460,6 +467,75 @@ jobs:
             full/build.log
             full/gradle.log
             full/obj-aarch64-linux-android/config.log
+
+  snapshot-buildstate:
+    name: 编译产物快照 → buildstate 分支（长期保存，gradle-only 免 run id 复用）
+    needs: build
+    # snapshot 阶段：build job 被跳过，用 always() 解锁；full 阶段：构建成功才快照
+    if: ${{ always() && ((inputs.stage == 'full' && needs.build.result == 'success') || inputs.stage == 'snapshot') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download buildstate artifact
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ github.run_id }}"
+          if [ "${{ inputs.stage }}" = "snapshot" ]; then
+            RUN_ID="${{ inputs.buildstate_run_id }}"
+            [ -n "$RUN_ID" ] || { echo "::error::snapshot 阶段必须提供 buildstate_run_id"; exit 1; }
+          fi
+          rm -rf /tmp/bs-in && mkdir -p /tmp/bs-in
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" \
+            -n waterfox-android24-buildstate-gradled -D /tmp/bs-in
+          ls -la /tmp/bs-in
+
+      - name: 分块推送 buildstate 分支（孤儿提交整体替换，不保留历史）
+        run: |
+          set -euo pipefail
+          TARBALL=$(ls /tmp/bs-in/*.tar.zst | head -1)
+          SIZE=$(du -m "$TARBALL" | cut -f1)
+          echo "tarball: $TARBALL ($SIZE MB)"
+          rm -rf /tmp/bs-git && mkdir -p /tmp/bs-git/parts
+          split -b 90m -d "$TARBALL" /tmp/bs-git/parts/part-
+          PARTS=$(ls /tmp/bs-git/parts | wc -l)
+          echo "分块: $PARTS 个（90MB/块，cat parts/* > *.tar.zst 还原）"
+          cat > /tmp/bs-git/README.md <<EOF
+          # buildstate 分支（孤儿分支：只存最近一次编译产物快照，不保留历史）
+
+          - 还原：\`cat parts/* > buildstate-gradled.tar.zst && tar --zstd -xf buildstate-gradled.tar.zst\`
+          - 90MB 分块 part-00 ~ part-$(printf '%02d' $((PARTS-1)))（$SIZE MB）
+          - 来源 run: ${{ github.run_id }} / commit ${{ github.sha }} / $(date -u '+%Y-%m-%d %H:%M UTC')
+          - 每次构建成功整体替换本分支；staging 为推送中的临时分支
+          EOF
+          git init /tmp/bs-git -b buildstate
+          cd /tmp/bs-git
+          git config user.name buildstate-bot
+          git config user.email actions@github.com
+          git config http.postBuffer 524288000
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          BATCH=18
+          N=0; FIRST=true
+          FILES=$(ls parts/*)
+          TOTAL=$(echo "$FILES" | wc -l)
+          for f in $FILES; do
+            git add "$f" README.md
+            N=$((N+1))
+            if [ $((N % BATCH)) -eq 0 ] || [ "$N" -eq "$TOTAL" ]; then
+              git commit -qm "buildstate snapshot $SIZE MB ($PARTS parts), src run ${{ github.run_id }}"
+              if [ "$FIRST" = true ]; then
+                git push -f "$URL" HEAD:refs/heads/buildstate-staging
+                FIRST=false
+              else
+                git push "$URL" HEAD:refs/heads/buildstate-staging
+              fi
+            fi
+          done
+          # 全部分块推完后原子换头：staging → buildstate（失败时旧 buildstate 完好）
+          git push -f "$URL" HEAD:refs/heads/buildstate
+          git push "$URL" --delete buildstate-staging || true
+          echo "buildstate 分支已更新（$PARTS 块，$SIZE MB）"
 
   release:
     name: 删除并重建 Release（含 APK）

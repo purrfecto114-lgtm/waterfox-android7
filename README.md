@@ -18,10 +18,15 @@ Release 以 **pre-release** 形式发布；上游发新版前，同一版本号�
 
 | 输入 | 说明 |
 |---|---|
-| `stage` | `full` 完整构建；`gradle-only` 复用上次 run 的 buildstate 只重跑打包段 |
+| `stage` | `full` 完整构建；`gradle-only` 复用编译产物只重跑打包段；`snapshot` 把指定 run 的编译产物存入 `buildstate` 分支 |
 | `version` | versionName，与上游对齐（如 `1.2.11`） |
 | `tag` | Release tag（如 `android24-v1.0`） |
 | `publish` | `true` 时删除旧 Release 并以 pre-release 重建 |
+| `buildstate_run_id` | `gradle-only` 留空则自动从 `buildstate` 分支恢复最近快照；`snapshot` 必填 |
+
+每次 `full` 构建成功后，编译产物（objdir 快照）自动以孤儿提交推送到 **`buildstate` 分支**
+（90MB 分块，`cat parts/* > buildstate-gradled.tar.zst` 还原），长期保存不随 artifact
+过期失效，调试迭代免重复编译内核。
 
 ## 移植要点
 
