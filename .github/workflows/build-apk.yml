@@ -471,8 +471,8 @@ jobs:
   snapshot-buildstate:
     name: 编译产物快照 → buildstate 分支（长期保存，gradle-only 免 run id 复用）
     needs: build
-    # snapshot 阶段：build job 被跳过，用 always() 解锁；full 阶段：构建成功才快照
-    if: ${{ always() && ((inputs.stage == 'full' && needs.build.result == 'success') || inputs.stage == 'snapshot') }}
+    # snapshot 阶段：build job 被跳过，用 always() 解锁；full/gradle-only：构建成功即刷新分支
+    if: ${{ always() && ((inputs.stage != 'snapshot' && needs.build.result == 'success') || inputs.stage == 'snapshot') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:

@@ -35,8 +35,10 @@ object ApplicationExitInfoMetrics {
     // Lazy so that merely loading this object never touches the API-30 ApplicationExitInfo
     // class; only code paths that already checked SDK_INT >= R may read it.
     // (android24 migration: upstream minSdk was 26)
-    @RequiresApi(Build.VERSION_CODES.R)
-    @VisibleForTesting(otherwise = PRIVATE)
+    // 注解用 @get: 用点目标：Kotlin 委托属性（by lazy）无 backing field，
+    // 直接标注会报 WRONG_ANNOTATION_TARGET（不适用于 'member property with delegate'）
+    @get:RequiresApi(Build.VERSION_CODES.R)
+    @get:VisibleForTesting(otherwise = PRIVATE)
     internal val TRACKED_REASONS: List<Int> by lazy {
         buildList {
             add(ApplicationExitInfo.REASON_ANR)
