@@ -5,6 +5,7 @@
 package org.mozilla.fenix.settings
 
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -60,12 +61,18 @@ class PairFragment : Fragment(R.layout.fragment_pair), UserInteractionHandler, S
                         scopes = setOf(SCOPE_SYNC, SCOPE_PROFILE, SCOPE_SESSION),
                     )
                     val vibrator = requireContext().getSystemService<Vibrator>()!!
-                    vibrator.vibrate(
-                        VibrationEffect.createOneShot(
-                            VIBRATE_LENGTH,
-                            VibrationEffect.DEFAULT_AMPLITUDE,
+                    // VibrationEffect is API 26+; fall back to the deprecated time-based overload
+                    // on API 24/25. (android24 migration)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        vibrator.vibrate(
+                            VibrationEffect.createOneShot(
+                                VIBRATE_LENGTH,
+                                VibrationEffect.DEFAULT_AMPLITUDE,
+                            )
                         )
-                    )
+                    } else {
+                        @Suppress("DEPRECATION") vibrator.vibrate(VIBRATE_LENGTH)
+                    }
                     exitPairing()
                 },
                 scanMessage = R.string.pair_instructions_2,

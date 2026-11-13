@@ -13,6 +13,7 @@ import android.content.Intent.CATEGORY_HOME
 import android.content.Intent.FLAG_ACTIVITY_NEW_DOCUMENT
 import android.content.Intent.FLAG_ACTIVITY_NEW_TASK
 import android.content.pm.ShortcutManager
+import android.os.Build
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.getSystemService
 import androidx.core.content.pm.ShortcutInfoCompat
@@ -111,6 +112,11 @@ class WebAppShortcutManager(
 
     /** Update existing PWA shortcuts with the latest info from web app manifests. */
     suspend fun updateShortcuts(context: Context, manifests: List<WebAppManifest>) {
+        // ShortcutManager is an API 25+ class; the class literal would throw
+        // NoClassDefFoundError on API 24. (android24 migration)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) {
+            return
+        }
         context.getSystemService<ShortcutManager>()?.apply {
             val shortcuts = manifests.mapNotNull { buildWebAppShortcut(context, it)?.toShortcutInfo() }
             updateShortcuts(shortcuts)
@@ -214,8 +220,13 @@ class WebAppShortcutManager(
      * Finds the shortcut associated with the given startUrl. This method can be used to check if a web app was added to
      * the homescreen.
      */
-    fun findShortcut(context: Context, startUrl: String) =
-        context.getSystemService<ShortcutManager>()?.pinnedShortcuts?.find { it.id == startUrl }
+    fun findShortcut(context: Context, startUrl: String): android.content.pm.ShortcutInfo? {
+        // API 24 has no ShortcutManager (API 25+); no pinned shortcuts can exist. (android24 migration)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) {
+            return null
+        }
+        return context.getSystemService<ShortcutManager>()?.pinnedShortcuts?.find { it.id == startUrl }
+    }
 
     /**
      * Checks if there is a currently installed web app to which this URL belongs.

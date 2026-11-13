@@ -303,6 +303,11 @@ public final class Clipboard {
   }
 
   private static long getClipboardTimestamp(final Context context) {
+    // ClipDescription.getTimestamp() is API 26+; on API 24/25 the timestamp is unknown
+    // and we report 0 (callers treat 0 as "no timestamp"). (android24 migration)
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      return 0;
+    }
     final ClipboardManager cm =
         (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
     final ClipDescription description = cm.getPrimaryClipDescription();

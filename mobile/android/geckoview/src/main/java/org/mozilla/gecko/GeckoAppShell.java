@@ -415,7 +415,11 @@ public class GeckoAppShell {
       final float accuracy = location.hasAccuracy() ? location.getAccuracy() : Float.NaN;
 
       final float altitudeAccuracy =
-          location.hasVerticalAccuracy() ? location.getVerticalAccuracyMeters() : Float.NaN;
+          // Location.hasVerticalAccuracy()/getVerticalAccuracyMeters() are API 26+;
+          // report NaN ("unknown") on API 24/25. (android24 migration)
+          (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasVerticalAccuracy())
+              ? location.getVerticalAccuracyMeters()
+              : Float.NaN;
 
       final float speed = location.hasSpeed() ? location.getSpeed() : Float.NaN;
 

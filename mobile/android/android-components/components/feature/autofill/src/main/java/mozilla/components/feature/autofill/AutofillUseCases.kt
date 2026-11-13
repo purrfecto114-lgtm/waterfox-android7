@@ -6,6 +6,7 @@ package mozilla.components.feature.autofill
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
 import android.view.autofill.AutofillManager
 import androidx.core.net.toUri
@@ -16,15 +17,27 @@ class AutofillUseCases {
     private val logger = Logger("AutofillUseCases")
 
     /** Returns true if Autofill is supported by the current device, defaulting to false in the case of an exception. */
-    fun isSupported(context: Context): Boolean =
-        Result.runCatching {
+    fun isSupported(context: Context): Boolean {
+        // AutofillManager is an API 26+ class. Referencing it on API 24/25 would throw
+        // NoClassDefFoundError at the class literal, which runCatching would swallow only
+        // after a failed class load; short-circuit instead. (android24 migration)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return false
+        }
+        return Result.runCatching {
                 context.getSystemService(AutofillManager::class.java).isAutofillSupported
             }
             .getOrDefault(false)
+    }
 
     /** Returns true if this application is providing Autofill services for the current user. */
     @Suppress("TooGenericExceptionCaught")
     fun isEnabled(context: Context): Boolean {
+        // API 26+ only (android24 migration): the try/catch below would NOT catch the
+        // NoClassDefFoundError thrown when loading AutofillManager on API 24/25.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return false
+        }
         return try {
             context.getSystemService(AutofillManager::class.java).hasEnabledAutofillServices()
         } catch (e: RuntimeException) {
@@ -44,6 +57,10 @@ class AutofillUseCases {
 
     /** Disables autofill if this application is providing Autofill services for the current user. */
     fun disable(context: Context) {
+        // API 26+ only (android24 migration).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
         context.getSystemService(AutofillManager::class.java).disableAutofillServices()
     }
 }

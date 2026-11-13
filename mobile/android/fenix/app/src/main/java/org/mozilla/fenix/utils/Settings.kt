@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Context.MODE_PRIVATE
 import android.content.SharedPreferences
 import android.content.res.Resources
+import android.os.Build
 import android.os.Environment
 import android.view.accessibility.AccessibilityManager
 import androidx.annotation.VisibleForTesting
@@ -1924,7 +1925,12 @@ class Settings(
      * Automotive OS for now until we meet specific Google requirements around protecting passwords and credit card
      * information in cars.
      */
-    val isAutofillSupported: Boolean by lazy { !appContext.isAndroidAutomotiveAvailable() }
+    val isAutofillSupported: Boolean by lazy {
+        // System autofill requires API 26+; on API 24/25 the feature is disabled entirely so that
+        // neither the settings UI nor the service component state touch the API 26 classes.
+        // (android24 migration: upstream minSdk was 26)
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !appContext.isAndroidAutomotiveAvailable()
+    }
 
     var shouldPromptToSaveLogins by
         booleanPreference(

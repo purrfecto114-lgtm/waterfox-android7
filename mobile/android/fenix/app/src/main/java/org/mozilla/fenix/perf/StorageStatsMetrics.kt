@@ -7,6 +7,7 @@ package org.mozilla.fenix.perf
 import android.app.usage.StorageStats
 import android.app.usage.StorageStatsManager
 import android.content.Context
+import android.os.Build
 import androidx.annotation.VisibleForTesting
 import androidx.annotation.VisibleForTesting.Companion.PRIVATE
 import androidx.annotation.WorkerThread
@@ -36,6 +37,12 @@ object StorageStatsMetrics {
      * @param scope The [CoroutineScope] in which to launch the reporting task.
      */
     fun report(context: Context, scope: CoroutineScope) {
+        // StorageStatsManager is only available on API 26+; loading the class on API 24
+        // would throw NoClassDefFoundError (android24 migration: minSdk was 26 upstream).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            logger.info("Storage stats require API 26+; skipping on API ${Build.VERSION.SDK_INT}")
+            return
+        }
         scope.launch(Dispatchers.IO) {
             reportSync(context)
         }

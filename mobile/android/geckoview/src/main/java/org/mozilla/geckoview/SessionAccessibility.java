@@ -884,12 +884,19 @@ public class SessionAccessibility {
       node.setMultiLine((flags & FLAG_MULTI_LINE) != 0);
       node.setContentInvalid((flags & FLAG_CONTENT_INVALID) != 0);
 
-      if (hint != null) {
-        node.setHintText(addSpansToText(hint, language));
-      }
-
       // Set bundle keys like role description
       final Bundle bundle = node.getExtras();
+
+      if (hint != null) {
+        // AccessibilityNodeInfo.setHintText() is API 26+; fall back to an extras key on
+        // API 24/25. (android24 migration: upstream minSdk was 26)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          node.setHintText(addSpansToText(hint, language));
+        } else {
+          bundle.putCharSequence("AccessibilityNodeInfo.hint", addSpansToText(hint, language));
+        }
+      }
+
       if (geckoRole != null) {
         bundle.putCharSequence("AccessibilityNodeInfo.geckoRole", geckoRole);
       }

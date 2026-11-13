@@ -524,7 +524,11 @@ data class Addon(
                             .format(localizedPermissions)
                     }
                     else -> {
-                        ListFormatter.getInstance(Locale.getDefault()).format(localizedPermissions)
+                        // ListFormatter.format(Collection) is only in the public SDK from API 29;
+                        // use the varargs overload (available since API 24) on older devices.
+                        // (android24 migration)
+                        ListFormatter.getInstance(Locale.getDefault())
+                            .format(*localizedPermissions.toTypedArray())
                     }
                 }
             return formattedList

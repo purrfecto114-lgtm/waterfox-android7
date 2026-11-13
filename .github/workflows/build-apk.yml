@@ -26,9 +26,9 @@ on:
         required: false
         default: ''
       version:
-        description: 'APK versionName（branchBuild.waterfox.version）'
+        description: 'APK versionName（branchBuild.waterfox.version，与上游 Waterfox 对齐）'
         required: true
-        default: '1.0.0'
+        default: '1.2.11'
       tag:
         description: 'Release tag（publish=true 时删除并重建）'
         required: true
@@ -502,14 +502,44 @@ jobs:
           # Waterfox Android 7 (API 24) 迁移 + Release APK（${{ inputs.tag }}）
 
           > ⚠️ **AI 生成声明**：本 release 的迁移代码、补丁、报告与 APK 构建工作流均由 AI（GLM，Z.ai）生成。
-          > APK 已于 GitHub Actions 完成编译、签名与证书校验；尚未经真机验证。
+          > APK 已于 GitHub Actions 完成编译、签名与证书校验；尚未经充分真机验证。
 
           ## 迁移摘要（版本 B：App 层与内核一起降级，基线保持上游 main）
 
           - 基线：BrowserWorks/waterfox-android @ ${{ env.BASELINE_SHA }}（Gecko 160）
-          - 改动：26 文件，+274/−125；minSdk 26 → 24（targetSdk 37 不变）；恢复 coreLibraryDesugaring（desugar-jdk-libs 2.1.5）
+          - 改动：minSdk 26 → 24（targetSdk 37 不变）；恢复 coreLibraryDesugaring（desugar-jdk-libs 2.1.5）
           - 修复 19 处 API 26+ P0 崩溃点 + 1 处 DRM 功能错误（CodecProxy.supportsCBCS）+ 1 处静默禁用（营销通知）
           - AndroidX 零降级（实测 89 个 AAR minSdkVersion 最大值恰为 24）
+
+          ## v1.0.2：启动崩溃（卡 logo 循环）修复
+
+          对已发布 APK 做了 dex 级全量 API 引用审计（解析 3 个 dex 的全部 invoke/field/class
+          指令，与 android-24 android.jar 符号集差分，含继承展开），确认并修复以下
+          上游 minSdk=26 遗留的无防护 API 调用：
+
+          **启动路径（Android 7 卡 logo / 崩溃循环的直接原因）**
+          1. `FenixApplication.setStartupMetrics` → `AutofillUseCases.isEnabled`：
+             AutofillManager（API 26 类）类字面量加载抛 NoClassDefFoundError，
+             try/catch(RuntimeException) 拦不住 → 启动 IO 协程崩溃循环
+          2. `updateAutofillServiceState`：`ComponentName(this, AutofillService::class.java)`
+             触发类链接，父类 android.service.autofill.AutofillService 仅 API 26+ 存在 →
+             改用字符串 ComponentName（不加载类）
+          3. `StorageStatsMetrics.report`：StorageStatsManager（API 26）+ storageUuid（API 26 字段）
+
+          **功能路径**
+          4. `WebAppShortcutManager`：ShortcutManager 是 API 25 类（updateShortcuts/findShortcut 两处）
+          5. `PairFragment`：VibrationEffect（API 26）→ 回退 deprecated vibrate(ms)
+          6. `Clipboard.getClipboardTimestamp`：ClipDescription.getTimestamp（API 26）→ 返回 0
+          7. `GeckoAppShell.onLocationChanged`：hasVerticalAccuracy/getVerticalAccuracyMeters（API 26）→ NaN
+          8. `SessionAccessibility.setHintText`（API 26）→ extras 兼容
+          9. `AutofillUseCases.disable`（API 26）+ `Settings.isAutofillSupported` 增加 >= O 门控
+             （API 24 上系统 autofill 整体降级，与 1.1.x 行为一致）
+          10. `GeckoProcessManager.isIsolatedGmpEnabled`：bindIsolatedService（API 29）兜底
+          11. `ApplicationExitInfoMetrics.TRACKED_REASONS` 改 lazy（防止类加载即触碰 API 30 类）
+          12. `Addon` ListFormatter：format(Collection) SDK 24 未暴露 → 变参重载
+
+          其余审计命中（dex 中引用但已在 SDK_INT 防护分支内，或 androidx/compose 内部自带
+          防护，或 hidden-API 在 Android 7 运行时实际存在）均逐一源码核实无问题。
 
           ## APK 信息
 
@@ -534,11 +564,13 @@ jobs:
           sed -i "s/@VER@/$VER/g; s/@CODE@/$CODE/g" notes.md
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
+            --prerelease \
             --title "Waterfox Android 7 (API 24) migration + APK ($TAG)" \
             --notes-file notes.md \
             apk/*.apk apk/mapping.txt \
             slim/docs/android24-migration/android24-full-migration.patch \
             slim/docs/android24-migration/FINAL_REPORT.md \
+            slim/docs/android24-migration/STARTUP_CRASH_AUDIT.md \
             slim/docs/android24-migration/phase1_report.md \
             slim/docs/android24-migration/phase3_androidx_minsdk.json
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | .name + " " + (.size|tostring)'

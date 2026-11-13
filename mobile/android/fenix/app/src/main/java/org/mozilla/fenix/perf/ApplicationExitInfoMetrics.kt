@@ -32,20 +32,25 @@ object ApplicationExitInfoMetrics {
     private const val KILOBYTES_TO_MEGABYTES_CONVERSION = 1024.0
 
     // User-triggered reasons (USER_REQUESTED, USER_STOPPED, PERMISSION_CHANGE, PACKAGE_*) are excluded.
+    // Lazy so that merely loading this object never touches the API-30 ApplicationExitInfo
+    // class; only code paths that already checked SDK_INT >= R may read it.
+    // (android24 migration: upstream minSdk was 26)
     @RequiresApi(Build.VERSION_CODES.R)
     @VisibleForTesting(otherwise = PRIVATE)
-    internal val TRACKED_REASONS = buildList {
-        add(ApplicationExitInfo.REASON_ANR)
-        add(ApplicationExitInfo.REASON_CRASH)
-        add(ApplicationExitInfo.REASON_CRASH_NATIVE)
-        add(ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE)
-        add(ApplicationExitInfo.REASON_LOW_MEMORY)
-        add(ApplicationExitInfo.REASON_SIGNALED)
-        add(ApplicationExitInfo.REASON_OTHER)
-        add(ApplicationExitInfo.REASON_DEPENDENCY_DIED)
-        add(ApplicationExitInfo.REASON_INITIALIZATION_FAILURE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(ApplicationExitInfo.REASON_FREEZER)
+    internal val TRACKED_REASONS: List<Int> by lazy {
+        buildList {
+            add(ApplicationExitInfo.REASON_ANR)
+            add(ApplicationExitInfo.REASON_CRASH)
+            add(ApplicationExitInfo.REASON_CRASH_NATIVE)
+            add(ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE)
+            add(ApplicationExitInfo.REASON_LOW_MEMORY)
+            add(ApplicationExitInfo.REASON_SIGNALED)
+            add(ApplicationExitInfo.REASON_OTHER)
+            add(ApplicationExitInfo.REASON_DEPENDENCY_DIED)
+            add(ApplicationExitInfo.REASON_INITIALIZATION_FAILURE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(ApplicationExitInfo.REASON_FREEZER)
+            }
         }
     }
 

@@ -4,6 +4,7 @@
 
 package org.mozilla.gecko.process;
 
+import android.os.Build;
 import android.os.DeadObjectException;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
@@ -806,7 +807,9 @@ public final class GeckoProcessManager {
 
   /** true if the GMP plugin service runs on isolated process. */
   public boolean isIsolatedGmpEnabled() {
-    return mIsolatedGmp;
+    // Isolated-process GMP binding relies on Context.bindIsolatedService (API 29+).
+    // Never report enabled below that. (android24 migration: upstream minSdk was 26)
+    return mIsolatedGmp && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
   }
 
   public void crashChild(@NonNull final Selector selector) {

@@ -697,7 +697,10 @@ open class FenixApplication : Application(), Provider, ThemeProvider {
      * unaffected.
      */
     private fun updateAutofillServiceState() {
-        val service = ComponentName(this, AutofillService::class.java)
+        // Use a String-based ComponentName: ComponentName(this, AutofillService::class.java)
+        // would load AutofillService, whose superclass android.service.autofill.AutofillService
+        // only exists on API 26+ — NoClassDefFoundError on API 24/25. (android24 migration)
+        val service = ComponentName(this, "org.mozilla.fenix.autofill.AutofillService")
         val state =
             if (components.settings.isAutofillSupported) {
                 PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
