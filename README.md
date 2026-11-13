@@ -1,57 +1,44 @@
-# Waterfox-Android — Android 7 (API 24) 全量降级迁移（版本 B / 精简源码树）
+# Waterfox for Android（Android 7.0 / API 24 移植版）
 
-> ⚠️ **AI 生成声明**：本仓库的迁移代码、补丁、报告、脚本与 workflow 均由 AI（GLM，Z.ai）生成，
-> 属于自动化迁移产物。所有改动仅经静态验证（API 级别论证 + rg/git 复扫），**未经编译与真机验证**。
+[BrowserWorks/Waterfox-Android](https://github.com/BrowserWorks/Waterfox-Android) 的 fork，
+将最低系统要求从 Android 8（minSdk 26）降级到 **Android 7.0（minSdk 24）**，功能零删减。
+版本号与上游保持一致（当前 **1.2.11**），基线为上游 `main` @ `427cd346`（Gecko 160）。
 
-## 仓库性质
+> 本仓库的移植代码、CI 工作流与文档由 AI（GLM，Z.ai）生成。
 
-本仓库是 [BrowserWorks/Waterfox-Android](https://github.com/BrowserWorks/Waterfox-Android)（mozilla
-monorepo 式，含完整 Gecko 引擎）的 fork，**按精简策略重建为孤儿历史**：不含全内核（约 43 万个
-桌面端/引擎文件）的提交历史，仅保留 Android 端迁移所需的源码与配置。与父仓库基线的对应关系由
-补丁文件完整保存（见下）。
+## 下载
 
-- **基线**：父仓库 `main` @ `427cd346`（Gecko 160，2026-07-19）
-- **迁移结果**：`main` 分支 = 基线 Android 树（6 个 `chore(slim)` 导入提交）+ 5 个迁移提交 + 文档/CI 提交
+从 [Releases](../../releases) 获取 `fenix-waterfox-arm64-v8a-release.apk`（arm64-v8a，Android 7.0+）。
+Release 以 **pre-release** 形式发布；上游发新版前，同一版本号会删旧重发、持续迭代修复。
 
-## 包含 / 删除
+## 构建
 
-| 包含 | 说明 |
+`.github/workflows/build-apk.yml`（Actions 页手动触发）：
+本仓库的精简树叠加到上游基线全量树上，CI 现场完成 mach/Gradle 编译、签名与发布。
+
+| 输入 | 说明 |
 |---|---|
-| `mobile/android/` | GeckoView + android-components + fenix + focus-android 全部源码与资源 |
-| `build/moz.configure/` | minSdk 全局唯一来源（`android-sdk.configure`） |
-| `gradle/` | 版本目录（`libs.versions.toml`，含 desugar-jdk-libs 2.1.5）等 |
-| `docs/android24-migration/` | 完整报告、扫描脚本、AndroidX 实测数据、独立补丁 |
-| `.github/workflows/release.yml` | 手动触发的 release workflow |
+| `stage` | `full` 完整构建；`gradle-only` 复用上次 run 的 buildstate 只重跑打包段 |
+| `version` | versionName，与上游对齐（如 `1.2.11`） |
+| `tag` | Release tag（如 `android24-v1.0`） |
+| `publish` | `true` 时删除旧 Release 并以 pre-release 重建 |
 
-| 删除 | 理由 |
-|---|---|
-| 非 Android 的全部文件（引擎 C++、桌面端、python 构建系统等，约 43 万文件） | Android 端不需要；迁移对引擎源码零改动（已扫描验证） |
-| `mobile/android/examples/`、`geckoview_example/` | 演示工程，产品构建不需要 |
+## 移植要点
 
-**无损性**：迁移的 26 个改动文件 100% 位于 `mobile/android + build/moz.configure + gradle` 内，
-本仓库包含迁移全部触及面与 Android 端全部源码；引擎构建使用父仓库基线即可。
+- minSdk 26 → 24（targetSdk 37 不变），恢复 coreLibraryDesugaring
+- 修复 19 处 API 26+ 崩溃点及 1 处 DRM 功能错误；后续又修复 12 处启动路径无防护 API 调用（Android 7 卡 logo 循环）
+- AndroidX 零降级；系统级 autofill、PiP 等 API 24 缺失能力优雅降级
 
-## ⚠️ 本树不能独立编译
+## 仓库结构
 
-mozilla 构建系统需要完整树。编译验证方法（在有 Android SDK/NDK 的机器上）：
+- `mobile/android/` — GeckoView + android-components + fenix + focus-android 源码（精简树）
+- `build/moz.configure/`、`gradle/` — 构建配置（minSdk 全局来源）
+- `patches/` — CI 现场应用的本地补丁
+- `.overlay-deletions` — 叠加时需从上游基线删除的文件清单
+- `docs/android24-migration/` — [移植最终报告](docs/android24-migration/FINAL_REPORT.md)、
+  [启动崩溃审计与修复](docs/android24-migration/STARTUP_CRASH_AUDIT.md)、
+  [全量迁移补丁](docs/android24-migration/android24-full-migration.patch)
 
-```bash
-git clone https://github.com/BrowserWorks/Waterfox-Android.git
-cd Waterfox-Android && git checkout 427cd34663602950a8d8621a11c7aa273e7a3406
-git apply android24-full-migration.patch   # docs/android24-migration/ 或 release 资产中获取
-./mach build-android && ./mach package-android
-./mach android-api-lint                    # NewApi 深层检测
-```
+## 许可
 
-## 迁移要点（详见 `docs/android24-migration/FINAL_REPORT.md`）
-
-- `min_sdk_version` 26 → **24**，targetSdk 37 不变，1.2.x 功能零删减
-- 恢复 coreLibraryDesugaring（desugar-jdk-libs 2.1.5，与 1.1.x 同构）
-- 修复 19 处 API 26+ P0 崩溃点 + 1 处 DRM 功能错误（`CodecProxy.supportsCBCS`）+ 1 处静默禁用
-- **AndroidX 零降级**（实测 89 个 AAR 的 minSdkVersion 最大值恰为 24）
-- API 24 系统能力缺失（系统级 autofill、PiP、按渠道通知管理）→ 优雅降级，与 1.1.x 行为一致
-
-## 发布
-
-Release workflow 位于 `.github/workflows/release.yml`（`workflow_dispatch` 手动触发），
-当前发布：tag `android24-v1.0`（含补丁与报告资产）。
+沿用上游 Mozilla 公共许可（MPL 2.0 等），见 [LICENSE](LICENSE)。

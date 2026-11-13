@@ -570,7 +570,5 @@ jobs:
             apk/*.apk apk/mapping.txt \
             slim/docs/android24-migration/android24-full-migration.patch \
             slim/docs/android24-migration/FINAL_REPORT.md \
-            slim/docs/android24-migration/STARTUP_CRASH_AUDIT.md \
-            slim/docs/android24-migration/phase1_report.md \
-            slim/docs/android24-migration/phase3_androidx_minsdk.json
+            slim/docs/android24-migration/STARTUP_CRASH_AUDIT.md
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | .name + " " + (.size|tostring)'
