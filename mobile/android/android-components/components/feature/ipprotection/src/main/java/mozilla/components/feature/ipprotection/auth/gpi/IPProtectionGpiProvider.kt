@@ -8,6 +8,7 @@ package mozilla.components.feature.ipprotection.auth.gpi
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import mozilla.components.ExperimentalAndroidComponentsApi
 import mozilla.components.concept.engine.ipprotection.IPProtectionHandler
 import mozilla.components.concept.integrity.IntegrityClient
 import mozilla.components.feature.ipprotection.auth.IPProtectionAuthProvider

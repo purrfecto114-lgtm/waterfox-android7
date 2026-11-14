@@ -556,6 +556,9 @@ dependencies {
     implementation project(':components:concept-awesomebar')
     implementation project(':components:concept-base')
     implementation project(':components:concept-engine')
+    // android24 fork (de-GMS): lib-integrity-googleplay 移除后 fenix 显式依赖
+    // concept-integrity（Components.kt / IPProtection.kt 直接 import IntegrityClient）
+    implementation project(':components:concept-integrity')
     implementation project(':components:concept-menu')
     implementation project(':components:concept-push')
     implementation project(':components:concept-storage')
