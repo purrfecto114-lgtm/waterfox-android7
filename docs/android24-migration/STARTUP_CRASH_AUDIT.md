@@ -172,3 +172,35 @@ AlarmManagerSchedulerBroadcastReceiver）、`GoogleApiActivity`、`PlayCoreDialo
 崩溃根因**；但移除后启动路径上不再存在任何 GMS 代码（此前 FirebaseInitProvider 会在每次
 启动、Application.onCreate 之前执行），彻底排除该变量。若仍复现，请提供 logcat：
 `adb logcat -c && adb shell am start -n net.waterfox.android.release/org.mozilla.fenix.HomeActivity && adb logcat -d -b crash`
+
+## 八、v1.0.4 构建失败与修复（run 43542327278 → b50ef8f4）
+
+### 失败现象
+
+de-GMS 提交（5d5d1914）后 gradle-only 构建在
+`:components:feature-ipprotection:compileReleaseKotlin` 失败，11 个错误全部集中
+于 `IPProtectionGpiProvider.kt`，构建中止于 02:00（fenix 未开始编译）。
+
+### 根因（两处，一处已爆、一处潜伏）
+
+1. **已爆**：重写该文件 import 列表时误删
+   `import mozilla.components.ExperimentalAndroidComponentsApi` → 第 5 行
+   `@file:OptIn(ExperimentalAndroidComponentsApi::class)` 引用无法解析 →
+   OptIn 失效 → 30-32 行引用 concept-engine ipprotection 实验性 API 连锁报错。
+   修复：按原版位置补回该 import。
+2. **潜伏（CI 未走到即会被绊倒）**：fenix 移除 `lib-integrity-googleplay` 后，
+   concept-integrity 失去唯一传递来源（feature-ipprotection 对其依赖为
+   implementation 不传递，全树无 `api project(':components:concept-integrity')`
+   发布者），而 `Components.kt` / `IPProtection.kt` 直接 import
+   `IntegrityClient`，fenix 编译期必然 UNRESOLVED_REFERENCE。
+   修复：fenix `app/build.gradle` 显式补
+   `implementation project(':components:concept-integrity')`。
+
+### 教训（CI 修复类提交的自查清单新增两条）
+
+- 改 Kotlin import 列表时，必须对 `@file:OptIn` / `@OptIn` 引用的注解逐一核对
+  import 配对（本次靠脚本 grep 全量核对上轮 9 个改动文件，另 8 个均无恙）
+- 删除一个模块依赖时，检查该依赖是否同时是**其他直接 import 类型**的传递来源，
+   需要则显式补依赖（implementation 依赖不跨模块传递）
+- `IntegrityClient` 为 `fun interface`（单抽象方法 `request()`，`warmUp()` 默认
+  true），`IntegrityClient { Result.failure(...) }` lambda no-op 语法成立已核验
