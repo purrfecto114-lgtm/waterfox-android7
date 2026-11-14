@@ -92,3 +92,29 @@
 - 【真机日志】若仍异常，`adb logcat` 抓取：
   `adb logcat -c && adb shell am start -n net.waterfox.android/org.mozilla.fenix.HomeActivity`
   然后看 `adb logcat -d -b crash` 与 `AndroidRuntime` TAG 的 `FATAL EXCEPTION`
+
+## 五、v1.0.3 构建期修复：委托属性注解目标（Kotlin 编译错误）
+
+首次重构建（run 43465128112）mach build 全部通过，但
+`:fenix:compileWaterfoxReleaseKotlin` 报唯一错误（gradle.log:6568）：
+
+> ApplicationExitInfoMetrics.kt:38: error: This annotation is not applicable
+> to target 'member property with delegate'
+
+**原因**：修复 11 将 `TRACKED_REASONS` 改为 `by lazy` 委托属性。Kotlin 委托属性
+无 backing field，`@RequiresApi` / `@VisibleForTesting` 的适用目标
+（field/function/getter…）不含 "member property with delegate"，直接标注即
+WRONG_ANNOTATION_TARGET。
+
+**修复**：改用 `@get:` 用点目标（注解作用于 getter，getter 属 function，在适用列表内），
+运行时语义完全不变。提交 fc1ab4fc。
+
+## 六、构建结果（run 43483686634，2026-11-14）
+
+- stage=gradle-only：复用 run 43465128112 的 objdir 快照（跳过 80min mach build），
+  Kotlin 修复仅涉及 fenix 层，Gecko 编译成果直接可用
+- 全 job 通过：build / release 重建 / buildstate 分支快照（42×90MB 分块，3.75GB）
+- Release android24-v1.0：pre-release，versionName 1.2.11（versionCode 2026456046），
+  APK arm64-v8a 142.5MB + mapping.txt + 补丁与报告资产
+- 后续调试迭代：stage=gradle-only 且 buildstate_run_id 留空 → 自动从 buildstate
+  分支恢复，免 mach build、免 14 天 artifact 过期限制
