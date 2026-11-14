@@ -5,7 +5,9 @@
 package org.mozilla.fenix.reviewprompt
 
 import android.app.Dialog
+import android.content.ActivityNotFoundException
 import android.content.DialogInterface
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -13,6 +15,7 @@ import android.view.ViewGroup
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
 import androidx.fragment.compose.content
 import androidx.lifecycle.lifecycleScope
@@ -22,10 +25,9 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import kotlinx.coroutines.launch
 import mozilla.components.lib.state.helpers.StoreProvider.Companion.fragmentStore
 import mozilla.components.lib.state.helpers.StoreProvider.Companion.storeProvider
-import org.mozilla.fenix.components.ReviewPromptAttemptResult.Error
-import org.mozilla.fenix.components.ReviewPromptAttemptResult.NotDisplayed
 import org.mozilla.fenix.ext.openInNewTab
 import org.mozilla.fenix.ext.requireComponents
+import org.mozilla.fenix.settings.SupportUtils
 import org.mozilla.fenix.reviewprompt.CustomReviewPromptAction.LeaveFeedbackButtonClicked
 import org.mozilla.fenix.reviewprompt.CustomReviewPromptAction.NegativePrePromptButtonClicked
 import org.mozilla.fenix.reviewprompt.CustomReviewPromptAction.PositivePrePromptButtonClicked
@@ -88,13 +90,12 @@ class CustomReviewPromptBottomSheetFragment : BottomSheetDialogFragment() {
 
                     CustomReviewPromptNavigationEvent.OpenPlayStoreReviewPrompt -> {
                         val activity = activity ?: return@collect
-                        with(requireComponents.playStoreReviewPromptController) {
-                            val result = tryPromptReview(activity)
-                            when (result) {
-                                NotDisplayed,
-                                is Error -> tryLaunchPlayStoreReview(activity, ::openInNewTab)
-                                else -> {}
-                            }
+                        // android24 fork (de-GMS): Play In-App Review API 已移除，
+                        // 直接打开商店评分页；无 Play 商店（ActivityNotFoundException）时回退网页
+                        try {
+                            activity.startActivity(Intent(Intent.ACTION_VIEW, SupportUtils.RATE_APP_URL.toUri()))
+                        } catch (e: ActivityNotFoundException) {
+                            openInNewTab(SupportUtils.FENIX_PLAY_STORE_URL)
                         }
                     }
 

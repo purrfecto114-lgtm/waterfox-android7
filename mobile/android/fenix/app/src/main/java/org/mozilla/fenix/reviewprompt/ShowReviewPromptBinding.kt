@@ -4,18 +4,13 @@
 
 package org.mozilla.fenix.reviewprompt
 
-import android.app.Activity
-import java.lang.ref.WeakReference
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import mozilla.components.lib.state.helpers.AbstractBinding
 import org.mozilla.fenix.components.AppStore
-import org.mozilla.fenix.components.PlayStoreReviewPromptController
 import org.mozilla.fenix.components.appstate.AppAction
 import org.mozilla.fenix.components.appstate.AppState
 import org.mozilla.fenix.reviewprompt.ReviewPromptState.Eligible.Type
@@ -23,9 +18,6 @@ import org.mozilla.fenix.reviewprompt.ReviewPromptState.Eligible.Type
 /** A feature that shows either the Google Play Review Prompt or the built-in review prompt based on the eligibility. */
 class ShowReviewPromptBinding(
     private val appStore: AppStore,
-    private val promptController: PlayStoreReviewPromptController,
-    private val activityRef: WeakReference<Activity>,
-    private val uiScope: CoroutineScope,
     private val showCustomReviewPrompt: () -> Unit,
     mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
 ) : AbstractBinding<AppState>(appStore, mainDispatcher) {
@@ -41,17 +33,14 @@ class ShowReviewPromptBinding(
 
                     is ReviewPromptState.Eligible -> {
                         when (it.type) {
-                            Type.PlayStore -> tryShowPlayStorePrompt()
+                            // android24 fork (de-GMS): Play In-App Review API 已移除，
+                            // PlayStore 类型不再弹官方评分卡，直接跳过
+                            Type.PlayStore -> {}
                             Type.Custom -> showCustomReviewPrompt()
                         }
                         appStore.dispatch(AppAction.ReviewPromptAction.ReviewPromptShown)
                     }
                 }
             }
-    }
-
-    private fun tryShowPlayStorePrompt() = uiScope.launch {
-        val activity = activityRef.get() ?: return@launch
-        promptController.tryPromptReview(activity)
     }
 }

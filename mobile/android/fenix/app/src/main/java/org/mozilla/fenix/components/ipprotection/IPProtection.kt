@@ -18,7 +18,7 @@ import mozilla.components.feature.ipprotection.store.IPProtectionLocationMiddlew
 import mozilla.components.feature.ipprotection.store.IPProtectionStore
 import mozilla.components.feature.ipprotection.store.state.EligibilityStatus
 import mozilla.components.feature.ipprotection.store.state.IPProtectionState
-import mozilla.components.lib.integrity.googleplay.GooglePlayIntegrityClient
+import mozilla.components.concept.integrity.IntegrityClient
 import mozilla.components.service.fxa.manager.FxaAccountManager
 import mozilla.components.service.fxa.store.SyncStore
 import mozilla.components.support.base.log.logger.Logger
@@ -39,7 +39,9 @@ import org.mozilla.fenix.utils.Settings
  */
 data class IPProtectionAuthSources(
     val fxaAccountManager: Lazy<FxaAccountManager>,
-    val integrityClient: Lazy<GooglePlayIntegrityClient>,
+    // android24 fork (de-GMS): 类型改为 concept IntegrityClient（GooglePlayIntegrityClient 已移除，
+    // Components 中为 no-op 实现，GPI 认证恒失败）
+    val integrityClient: Lazy<IntegrityClient>,
 )
 
 /** Provides access to IP Protection related components. */

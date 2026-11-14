@@ -645,10 +645,12 @@ dependencies {
     implementation project(':components:lib-passwords-file')
     implementation project(':components:lib-crash')
     implementation project(':components:lib-dataprotect')
-    implementation project(':components:lib-push-firebase')
+    // android24 fork (de-GMS): lib-push-firebase 已移除 —— Waterfox 无 Firebase 配置，
+    // 推送本就不可用（pushConfig 恒 null）；见 components/Push.kt
     implementation project(':components:lib-state')
     implementation project(':components:lib-accelerometer-sensormanager')
-    implementation project(':components:lib-integrity-googleplay')
+    // android24 fork (de-GMS): lib-integrity-googleplay（play-integrity）已移除，
+    // Components.kt 中改为 no-op IntegrityClient；详见 docs/android24-migration/
     implementation project(':components:lib-llm-mlpa')
     implementation project(':components:lib-shake')
     implementation project(':components:lib-ai-controls')
@@ -708,8 +710,7 @@ dependencies {
     implementation libs.kotlinx.coroutines
     implementation libs.kotlinx.serialization.json
     implementation libs.mozilla.glean
-    implementation libs.play.review
-    implementation libs.play.review.ktx
+    // android24 fork (de-GMS): play.review（应用内评分）已移除，评分入口改为直接打开商店页
     implementation libs.protobuf.javalite
     implementation libs.androidx.documentfile
     implementation libs.zxing

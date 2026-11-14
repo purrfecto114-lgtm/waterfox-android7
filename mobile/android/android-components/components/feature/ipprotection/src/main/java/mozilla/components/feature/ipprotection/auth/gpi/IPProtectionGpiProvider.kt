@@ -8,11 +8,9 @@ package mozilla.components.feature.ipprotection.auth.gpi
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import mozilla.components.ExperimentalAndroidComponentsApi
 import mozilla.components.concept.engine.ipprotection.IPProtectionHandler
+import mozilla.components.concept.integrity.IntegrityClient
 import mozilla.components.feature.ipprotection.auth.IPProtectionAuthProvider
-import mozilla.components.lib.integrity.googleplay.GooglePlayIntegrityClient
-import mozilla.components.lib.integrity.googleplay.IntegrityConsumer
 import mozilla.components.support.base.log.logger.Logger
 
 /**
@@ -22,13 +20,14 @@ import mozilla.components.support.base.log.logger.Logger
  * N.B: This is intentionally kept separate from [mozilla.components.feature.ipprotection.IPProtectionFeature] so GPI
  * support can be composed in without affecting the default behavior.
  *
- * @param integrityClient the [GooglePlayIntegrityClient] to supply GPI tokens to the proxy service.
+ * @param integrityClient the [IntegrityClient] to supply GPI tokens to the proxy service.
  */
-class IPProtectionGpiProvider(private val integrityClient: GooglePlayIntegrityClient) : IPProtectionAuthProvider {
+// android24 fork (de-GMS): 参数类型改为 concept IntegrityClient（lib-integrity-googleplay 已移除，
+// fenix 侧传入 no-op 实现）；不再需要 forConsumer 遥测包装
+class IPProtectionGpiProvider(private val integrityClient: IntegrityClient) : IPProtectionAuthProvider {
     private val logger = Logger("IPP:Gpi")
 
     override fun configure(handler: IPProtectionHandler, scope: CoroutineScope) {
-        val ipProtectionIntegrityClient = integrityClient.forConsumer(IntegrityConsumer.IpProtection)
         handler.setGpiProvider(
             object : IPProtectionHandler.GpiProvider {
                 override fun warmUp(onComplete: (Boolean) -> Unit) {
@@ -40,7 +39,7 @@ class IPProtectionGpiProvider(private val integrityClient: GooglePlayIntegrityCl
                 override fun getToken(onComplete: (String?) -> Unit) {
                     scope.launch {
                         val token =
-                            ipProtectionIntegrityClient
+                            integrityClient
                                 .request()
                                 .onFailure { logger.error("GPI token request failed", it) }
                                 .getOrNull()

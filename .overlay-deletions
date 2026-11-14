@@ -5,3 +5,8 @@ mobile/android/fenix/app/src/main/res/mipmap-anydpi
 mobile/android/fenix/app/src/waterfoxRelease/res/mipmap-anydpi
 mobile/android/fenix/app/src/debug/res/mipmap-anydpi
 mobile/android/fenix/app/src/waterfoxDebug/res/mipmap-anydpi
+# 2026-11-14: de-GMS（v1.0.4）——firebase 推送与 Play 评分/完整性组件移除
+mobile/android/fenix/app/src/main/java/org/mozilla/fenix/push/FirebasePushService.kt
+mobile/android/fenix/app/src/main/java/org/mozilla/fenix/components/PlayStoreReviewPromptController.kt
+mobile/android/fenix/app/src/test/java/org/mozilla/fenix/reviewprompt/ShowPlayStoreReviewPromptTest.kt
+mobile/android/fenix/app/src/test/java/org/mozilla/fenix/components/PlayStoreReviewPromptControllerTest.kt

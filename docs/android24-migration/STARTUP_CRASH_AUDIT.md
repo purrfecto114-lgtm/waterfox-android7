@@ -118,3 +118,57 @@ WRONG_ANNOTATION_TARGET。
   APK arm64-v8a 142.5MB + mapping.txt + 补丁与报告资产
 - 后续调试迭代：stage=gradle-only 且 buildstate_run_id 留空 → 自动从 buildstate
   分支恢复，免 mach build、免 14 天 artifact 过期限制
+
+## 七、v1.0.4：de-GMS —— Google Play / Firebase 代码面审计与移除
+
+用户反馈：点击图标后 logo 连续跳转 5 次反复重启，第 6 次闪退，怀疑与 Google Play 有关。
+对已发布 APK（android24-v1.0，versionCode 2026456046）做了 dex + manifest 级 GMS 引用面审计。
+
+### 审计结果（实际打包面）
+
+dex 中共 1528 个 com.google 类，其中 GMS/Play/Firebase 相关（扣除必须保留的
+material/zxing/accompanist UI 库）分四组：
+
+| 组 | dex 类数 | 启动路径 | 处置 |
+|---|---|---|---|
+| firebase-messaging 25.0.2 及传递依赖（components/installations/heartbeatinfo/datatransport/cct/cloudmessaging） | ~180 | `FirebaseInitProvider`（Application.onCreate 前运行，无 google-services.json → no-op）；`firebase_messaging_auto_init_enabled=true` | **移除** |
+| play.review + play.core + play.integrity（In-App Review / Play Integrity） | ~80 | 全部 lazy / 事件触发，均有 try/catch | **移除** |
+| play-services-fido（geckoview WebAuthn 依赖） | 111+ | 仅网站触发 WebAuthn 时，SDK_INT + try/catch 防护 | **保留**（见下） |
+| play-services-base/tasks/signin/auth（上述的传递依赖） | ~200 | 随宿主 | 随宿主消失 |
+
+### 移除的 manifest 组件（合并后 APK 中实际存在，全部消失）
+
+`FirebaseInitProvider`、`FirebaseMessagingService`、`FirebaseInstanceIdReceiver`、
+`ComponentDiscoveryService`、`org.mozilla.fenix.push.FirebasePushService`、
+`datatransport.runtime` 3 件套（TransportBackendDiscovery/JobInfoSchedulerService/
+AlarmManagerSchedulerBroadcastReceiver）、`GoogleApiActivity`、`PlayCoreDialogWrapperActivity`，
+及 `firebase_*` meta-data 三条。
+
+### 改动清单
+
+- fenix/app：删 `lib-push-firebase`、`play.review(ktx)`、`lib-integrity-googleplay` 依赖；
+  删 `FirebasePushService.kt`、`PlayStoreReviewPromptController.kt`（4 文件入 .overlay-deletions）；
+  `Push.kt` feature 恒 null（与原行为一致：无 Firebase 配置时 pushConfig 本就恒 null）；
+  评分入口（设置页 + 自定义评分卡）改为直接打开商店页，无商店时回退网页
+- `Components.kt`：`integrityClient` 改 no-op IntegrityClient（GPI 认证恒失败）
+- android-components：`IPProtectionGpiProvider` 参数类型 GooglePlayIntegrityClient → concept
+  IntegrityClient（连带 feature/ipprotection 去掉 lib-integrity-googleplay 依赖与测试同步）
+
+### 功能影响面（重点核实）
+
+- **零损失**：WebPush/FxA 推送（Waterfox 无 Firebase 配置，本就恒 null 死代码）；
+  LLM / IPProtection 的 GPI 认证（需 Mozilla 后端 + 账号，Waterfox 下本不可用，失败路径优雅降级）
+- **轻微降级**：Play 官方"应用内评分卡"不再弹出（GMS 设备），改为直接打开商店评分页；
+  自定义评分卡（Nimbus）不受影响
+- **不受影响**：Glean 遥测（自研上传通道）、OSS 许可页（oss-licenses 插件仅构建期生成资源，
+  APK 中无 play-services-oss-licenses 运行时类，已验证）、WebAuthn（保留 fido，见下）
+- **保留 fido 的理由**：geckoview WebAuthnTokenManager 直接引用具体类，移除需 geckoview Java
+  手术；该路径不在启动面且有防护，在**有** GMS 的 Android 7 设备上 passkey 功能仍可用。
+  如需彻底去 GMS 可后续处理
+
+### 与崩溃循环的关联性（诚实评估）
+
+所有被移除的 GMS 代码路径均有异常防护或无配置时 no-op，**无法在无日志情况下断定其为
+崩溃根因**；但移除后启动路径上不再存在任何 GMS 代码（此前 FirebaseInitProvider 会在每次
+启动、Application.onCreate 之前执行），彻底排除该变量。若仍复现，请提供 logcat：
+`adb logcat -c && adb shell am start -n net.waterfox.android.release/org.mozilla.fenix.HomeActivity && adb logcat -d -b crash`

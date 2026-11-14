@@ -10,12 +10,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.NotificationManagerCompat
-import com.google.android.play.core.review.ReviewManagerFactory
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import mozilla.components.concept.ai.controls.AIFeatureBlock
 import mozilla.components.concept.ai.controls.AIFeatureRegistry
-import mozilla.components.concept.integrity.RequestHashProvider
+import mozilla.components.concept.integrity.IntegrityClient
 import mozilla.components.feature.addons.AddonManager
 import mozilla.components.feature.addons.amo.AMOAddonsProvider
 import mozilla.components.feature.addons.migration.DefaultSupportedAddonsChecker
@@ -27,8 +26,6 @@ import mozilla.components.feature.tabdata.coordinator.TabDataCoordinator
 import mozilla.components.lib.ai.controls.AIFeatureBlockStorage
 import mozilla.components.lib.ai.controls.dataStore
 import mozilla.components.lib.ai.controls.default
-import mozilla.components.lib.integrity.googleplay.GooglePlayIntegrityClient
-import mozilla.components.lib.integrity.googleplay.IntegrityConsumer
 import mozilla.components.lib.llm.mlpa.MlpaTokenStorage
 import mozilla.components.lib.publicsuffixlist.PublicSuffixList
 import mozilla.components.service.fxrelay.eligibility.RelayEligibilityStore
@@ -249,7 +246,7 @@ class Components(
     val publicSuffixList by lazyMonitored { PublicSuffixList(context) }
     val clipboardHandler by lazyMonitored { ClipboardHandler(context) }
     val performance by lazyMonitored { PerformanceComponent() }
-    val push by lazyMonitored { Push(context, analytics.crashReporter) }
+    val push by lazyMonitored { Push(context) }
     val wifiConnectionMonitor by lazyMonitored { WifiConnectionMonitor(context as Application) }
 
     val strictMode by lazyMonitored {
@@ -261,13 +258,6 @@ class Components(
     }
     val settings by lazyMonitored { Settings(context) }
     val fenixOnboarding by lazyMonitored { FenixOnboarding(context) }
-
-    val playStoreReviewPromptController by lazyMonitored {
-        PlayStoreReviewPromptController(
-            manager = ReviewManagerFactory.create(context),
-            numberOfAppLaunches = { settings.numberOfAppLaunches },
-        )
-    }
 
     val autofillConfiguration by lazyMonitored {
         AutofillConfiguration(
@@ -396,12 +386,13 @@ class Components(
         )
     }
 
+    // android24 fork (de-GMS): GooglePlayIntegrityClient（play-integrity）已移除。
+    // no-op 实现：GPI 认证恒失败。受影响的 LLM / IPProtection(GPI) 认证路径
+    // 均需 Mozilla 后端与账号，Waterfox 下本就不可用；默认 FXA 认证路径不受影响。
     val integrityClient by lazyMonitored {
-        GooglePlayIntegrityClient.create(
-            context = context,
-            projectNumberToken = BuildConfig.GPS_INTEGRITY_TOKEN,
-            requestHashProvider = RequestHashProvider { clientUUID.generateHash() },
-        )
+        IntegrityClient {
+            Result.failure(IllegalStateException("Play Integrity removed (de-GMS)"))
+        }
     }
 
     val termsOfUsePromptRepository by lazyMonitored {
@@ -500,7 +491,7 @@ class Components(
             client = core.client,
             storage = MlpaTokenStorage.sharedPrefs(context),
             fxaTokenProvider = backgroundServices.accountManager.accessTokenProvider,
-            integrityClient = integrityClient.forConsumer(IntegrityConsumer.Summarize),
+            integrityClient = integrityClient,
             userIdProvider = clientUUID,
         )
     }

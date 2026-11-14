@@ -7,6 +7,7 @@ package org.mozilla.fenix.settings
 import android.Manifest.permission.ACCESS_LOCAL_NETWORK
 import android.content.DialogInterface
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -20,6 +21,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import androidx.core.content.edit
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -80,6 +82,7 @@ import org.mozilla.fenix.ext.getPreferenceKey
 import org.mozilla.fenix.ext.navigateToAppDetailsSettings
 import org.mozilla.fenix.ext.navigateToNotificationsSettings
 import org.mozilla.fenix.ext.openInNewTab
+import org.mozilla.fenix.settings.SupportUtils
 import org.mozilla.fenix.ext.requireComponents
 import org.mozilla.fenix.ext.showToolbar
 import org.mozilla.fenix.ext.showToolbarWithIconButton
@@ -554,10 +557,15 @@ class SettingsFragment : PreferenceFragmentCompat(), SystemInsetsPaddedFragment 
 
                 // About preferences
                 resources.getString(R.string.pref_key_rate) -> {
-                    components.playStoreReviewPromptController.tryLaunchPlayStoreReview(
-                        requireActivity(),
-                        ::openInNewTab,
-                    )
+                    // android24 fork (de-GMS): Play 评分控制器已移除，直接打开商店评分页；
+                    // 无 Play 商店（ActivityNotFoundException）时回退网页
+                    try {
+                        requireActivity().startActivity(
+                            Intent(Intent.ACTION_VIEW, SupportUtils.RATE_APP_URL.toUri()),
+                        )
+                    } catch (e: ActivityNotFoundException) {
+                        openInNewTab(SupportUtils.FENIX_PLAY_STORE_URL)
+                    }
                     null
                 }
 

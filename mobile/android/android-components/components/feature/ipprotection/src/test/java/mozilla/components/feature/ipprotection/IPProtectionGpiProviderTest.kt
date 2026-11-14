@@ -14,8 +14,6 @@ import mozilla.components.concept.engine.ipprotection.IPProtectionHandler
 import mozilla.components.concept.integrity.IntegrityClient
 import mozilla.components.concept.integrity.IntegrityToken
 import mozilla.components.feature.ipprotection.auth.gpi.IPProtectionGpiProvider
-import mozilla.components.lib.integrity.googleplay.GooglePlayIntegrityClient
-import mozilla.components.lib.integrity.googleplay.IntegrityConsumer
 import mozilla.components.support.test.argumentCaptor
 import mozilla.components.support.test.coMock
 import mozilla.components.support.test.mock
@@ -31,7 +29,7 @@ class IPProtectionGpiProviderTest {
     @Test
     fun `WHEN the provider warms up THEN it delegates to the integrity client`() = runTest {
         val integrityClient =
-            coMock<GooglePlayIntegrityClient> {
+            coMock<IntegrityClient> {
                 whenever(warmUp()).thenReturn(true)
             }
         val handler = mock<IPProtectionHandler>()
@@ -51,11 +49,9 @@ class IPProtectionGpiProviderTest {
 
     @Test
     fun `WHEN a token is requested THEN the consumer client token is returned`() = runTest {
+        // android24 fork (de-GMS): 直接提供 concept IntegrityClient（forConsumer 已移除）
         val integrityClient =
-            mock<GooglePlayIntegrityClient> {
-                whenever(forConsumer(IntegrityConsumer.IpProtection))
-                    .thenReturn(IntegrityClient { Result.success(IntegrityToken("gpi-token")) })
-            }
+            IntegrityClient { Result.success(IntegrityToken("gpi-token")) }
         val handler = mock<IPProtectionHandler>()
         val testScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
@@ -73,11 +69,9 @@ class IPProtectionGpiProviderTest {
 
     @Test
     fun `WHEN the token request fails THEN null is returned`() = runTest {
+        // android24 fork (de-GMS): 直接提供 concept IntegrityClient（forConsumer 已移除）
         val integrityClient =
-            mock<GooglePlayIntegrityClient> {
-                whenever(forConsumer(IntegrityConsumer.IpProtection))
-                    .thenReturn(IntegrityClient { Result.failure(RuntimeException("boom")) })
-            }
+            IntegrityClient { Result.failure(RuntimeException("boom")) }
         val handler = mock<IPProtectionHandler>()
         val testScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 

@@ -1480,9 +1480,6 @@ class HomeFragment : Fragment(), UserInteractionHandler, OnLongPressedListener {
             feature =
                 ShowReviewPromptBinding(
                     appStore = requireComponents.appStore,
-                    promptController = requireComponents.playStoreReviewPromptController,
-                    activityRef = WeakReference(activity),
-                    uiScope = viewLifecycleOwner.lifecycleScope,
                     showCustomReviewPrompt = { CustomReviewPromptBottomSheetFragment.showPrompt(this) },
                 ),
             owner = viewLifecycleOwner,

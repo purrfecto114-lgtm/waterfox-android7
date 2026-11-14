@@ -24,7 +24,7 @@ dependencies {
     implementation project(':components:concept-integrity')
     implementation project(':components:concept-sync')
     implementation project(':components:feature-tabs')
-    implementation project(':components:lib-integrity-googleplay')
+    // android24 fork (de-GMS): lib-integrity-googleplay 已移除（IPProtectionGpiProvider 改用 concept IntegrityClient）
     implementation project(':components:lib-state')
     implementation project(':components:service-firefox-accounts')
     implementation project(':components:support-base')
